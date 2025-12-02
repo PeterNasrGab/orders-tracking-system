@@ -1,0 +1,29 @@
+{
+  "name": "orders-tracking",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss7-compat": "^2.2.17",
+    "tailwindcss": "^4.1.15",
+    "vite": "^7.1.11"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.86.0",
+    "autoprefixer": "^10.4.21",
+    "firebase": "^12.4.0",
+    "lucide-react": "^0.546.0",
+    "node-schedule": "^2.1.1",
+    "postcss": "^8.5.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-icons": "^5.5.0",
+    "react-router-dom": "^7.9.4",
+    "react-select": "^5.10.2",
+    "uuid": "^13.0.0"
+  }
+}
