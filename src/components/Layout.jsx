@@ -18,6 +18,7 @@ export default function Layout() {
     { name: "Dashboard", path: "/", icon: <FiHome /> },
     { name: "Barry Dashboard", path: "/barry", icon: <FiHome /> },
     { name: "Gawy Dashboard", path: "/gawy", icon: <FiHome /> },
+    { name: "Upload Files", path: "/upload", icon: <FiUpload /> },
     ...(isAdmin ? [
       { name: "Add Order", path: "/add-order", icon: <FiPlusCircle /> },
       { name: "Uploads", path: "/uploads", icon: <FiUpload /> },
