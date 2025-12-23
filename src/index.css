@@ -4,4 +4,22 @@
 
 html, body, #root { height: 100%; }
 body { background-color: #f8fafc; }
+/* Custom scrollbar styling */
+.scrollable-nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollable-nav::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.scrollable-nav::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.scrollable-nav::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
 

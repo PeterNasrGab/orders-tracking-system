@@ -205,7 +205,7 @@ export default function BarryDashboard({ onBack }) {
   // Dynamic statuses from system settings
   const statuses = settings?.orderStatuses || [
     "Requested",
-    "Order placed",
+    "Order Placed",
     "Shipped to Egypt",
     "Delivered to Egypt",
     "In Distribution",

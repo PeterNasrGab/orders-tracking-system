@@ -15,6 +15,8 @@ import BarryOrders from "./pages/BarryDashboard";
 import GawyOrders from "./pages/GawyDashboard";
 import BarryDashboard from "./pages/BarryDashboard";
 import GawyDashboard from "./pages/GawyDashboard";
+import SheetsManagement from "./pages/SheetsManagement";
+import SheetDetails from "./pages/SheetDetails";
 
 // Protected Route Component
 function ProtectedRoute({ children, adminOnly = false, excludeAssistant = false }) {
@@ -80,6 +82,8 @@ function AppContent() {
               <UploadsDashboard />
             </ProtectedRoute>
           } />
+           <Route path="/sheets" element={ <ProtectedRoute adminOnly><SheetsManagement /></ProtectedRoute>} />
+        <Route path="/sheet/:sheetId" element={ <ProtectedRoute adminOnly><SheetDetails /></ProtectedRoute>} />
           <Route path="accounts-dashboard" element={<AccountsDashboard />} />
           <Route path="distribution-dashboard" element={
             <ProtectedRoute excludeAssistant>

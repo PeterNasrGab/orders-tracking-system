@@ -28,34 +28,27 @@ export default function AddOrder() {
     totalSR: "",
     depositEGP: "",
     orderType: "B",
-    accountName: "",
-    newAccount: "",
-    extraSR: "",
-    couponSR: "",
     discountSR: "",
     pieces: "",
-    paidToWebsite: "",
+    extraSR: "",
+    customerCode: "",
   });
 
-  const [trackingNumbers, setTrackingNumbers] = useState([""]);
   const [customers, setCustomers] = useState([]);
-  const [accounts, setAccounts] = useState([]);
   const [newCustomerMode, setNewCustomerMode] = useState(false);
   const [message, setMessage] = useState("");
   const [errors, setErrors] = useState({});
   const [totals, setTotals] = useState({
-    extraEGP: 0,
     totalOrderEGP: 0,
     outstandingEGP: 0,
+    extraEGP: 0,
+    baseEGP: 0,
   });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
 
-  // Load customers and accounts
+  // Load customers
   useEffect(() => {
     const fetchData = async () => {
-      const accSnap = await getDocs(collection(db, "accounts"));
-      setAccounts(accSnap.docs.map((doc) => ({ id: doc.id, name: doc.data().name })));
-
       const custSnap = await getDocs(collection(db, "customers"));
       const custList = custSnap.docs.map((doc) => ({
         id: doc.id,
@@ -88,7 +81,8 @@ export default function AddOrder() {
           orderType: data.orderType || "B",
           totalSR: data.totalSR || "",
           pieces: data.pieces || "",
-          accountName: data.accountName || "",
+          extraSR: data.extraSR || "",
+           customerCode: data.customerCode || "",
         }));
 
         if (data.customerId && customers.length > 0) {
@@ -133,21 +127,22 @@ export default function AddOrder() {
     }
   }, [customers, selectedCustomer]);
 
-  // Customer select
-  const handleCustomerChange = (selectedOption) => {
-    const selectedCustomer = customers.find((c) => c.id === selectedOption.value);
-    setForm((prev) => ({
-      ...prev,
-      customerId: selectedCustomer.id,
-      customerName: selectedCustomer.name,
-      phone: selectedCustomer.phone,
-      clientType: selectedCustomer.clientType,
-    }));
-    setSelectedCustomer(selectedOption);
-    if (errors.customerId) {
-      setErrors(prev => ({ ...prev, customerId: "" }));
-    }
-  };
+// Customer select
+const handleCustomerChange = (selectedOption) => {
+  const selectedCustomer = customers.find((c) => c.id === selectedOption.value);
+  setForm((prev) => ({
+    ...prev,
+    customerId: selectedCustomer.id,
+    customerName: selectedCustomer.name,
+    phone: selectedCustomer.phone,
+    clientType: selectedCustomer.clientType,
+    customerCode: selectedCustomer.customerCode,
+  }));
+  setSelectedCustomer(selectedOption);
+  if (errors.customerId) {
+    setErrors(prev => ({ ...prev, customerId: "" }));
+  }
+};
 
   // Validate new customer
   const validateCustomer = () => {
@@ -166,9 +161,6 @@ export default function AddOrder() {
     if (!form.customerId) {
       newErrors.customerId = "Customer is required";
     }
-    if (!form.accountName && !form.newAccount.trim()) {
-      newErrors.account = "Account is required";
-    }
     if (!form.totalSR || Number(form.totalSR) <= 0) {
       newErrors.totalSR = "Total SR is required and must be greater than 0";
     }
@@ -179,9 +171,9 @@ export default function AddOrder() {
     return Object.keys(newErrors).length === 0;
   };
 
-  // Generate next order ID using system settings
+  // Generate next order ID using new format: O-B1, O-G1, etc.
   const generateOrderId = async (orderType) => {
-    const counterRef = doc(db, "counters", orderType);
+    const counterRef = doc(db, "counters", "orders");
     const counterSnap = await getDoc(counterRef);
 
     let nextNumber = 1;
@@ -193,28 +185,36 @@ export default function AddOrder() {
       await setDoc(counterRef, { lastNumber: 1 });
     }
 
-    // Use prefix from system settings
-    const prefix = orderType === "B" 
-      ? systemSettings.orderCodePrefixBarry || "B"
-      : systemSettings.orderCodePrefixGawy || "G";
-    
+    // Format: O-B1, O-G1, O-B2, O-G2, etc.
+    const prefix = orderType === "B" ? "O-B" : "O-G";
     return `${prefix}${nextNumber}`;
   };
 
-  // Generate customer code using system settings
+  // Generate customer code using sequential numbers (WS-1, WS-2, RE-1, RE-2)
   const generateCustomerCode = async (type) => {
+    // Get prefix from system settings or use defaults
     const prefix = type === "Wholesale" 
-      ? systemSettings.customerCodePrefixWholesale || "WS"
-      : systemSettings.customerCodePrefixRetail || "RE";
+      ? (systemSettings.customerCodePrefixWholesale || "WS")
+      : (systemSettings.customerCodePrefixRetail || "RE");
     
+    // Query customers of the same type
     const q = query(collection(db, "customers"), where("clientType", "==", type));
     const snap = await getDocs(q);
+    
+    // Extract existing codes with the same prefix
     const existingCodes = snap.docs
       .map((doc) => doc.data().customerCode)
-      .filter((code) => code?.startsWith(prefix))
-      .map((code) => parseInt(code.split("-")[1], 10))
-      .filter((n) => !isNaN(n));
-    const nextNumber = existingCodes.length ? Math.max(...existingCodes) + 1 : 1;
+      .filter((code) => code && code.startsWith(prefix))
+      .map((code) => {
+        // Extract number from code like "WS-1" or "RE-12"
+        const match = code.match(new RegExp(`^${prefix}-(\\d+)$`));
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter((n) => !isNaN(n) && n > 0);
+    
+    // Find the next sequential number
+    const nextNumber = existingCodes.length > 0 ? Math.max(...existingCodes) + 1 : 1;
+    
     return `${prefix}-${nextNumber}`;
   };
 
@@ -235,9 +235,21 @@ export default function AddOrder() {
         createdAt: serverTimestamp(),
       };
       const docRef = await addDoc(collection(db, "customers"), newCust);
-      const newCustomer = { id: docRef.id, ...newCust };
-      setCustomers([...customers, newCustomer]);
+      const newCustomer = { 
+        id: docRef.id, 
+        ...newCust,
+        customerCode // Make sure customerCode is included
+      };
+      setCustomers(prev => [...prev, newCustomer].sort((a, b) => a.name.localeCompare(b.name)));
       setForm((prev) => ({ ...prev, customerId: docRef.id }));
+      
+      // Auto-select the newly created customer
+      const selectedOption = {
+        value: docRef.id,
+        label: `${form.customerName} (${customerCode})`
+      };
+      setSelectedCustomer(selectedOption);
+      
       setNewCustomerMode(false);
       setMessage(`✅ Customer added successfully! Code: ${customerCode}`);
       setErrors({});
@@ -246,177 +258,162 @@ export default function AddOrder() {
     }
   };
 
-  // Calculate totals using system settings
+  // Calculate totals using system settings - FIXED VERSION
   useEffect(() => {
     if (settingsLoading || !systemSettings) return;
 
     const totalSR = Number(form.totalSR || 0);
-    const extraSR = Number(form.extraSR || 0);
-    const couponSR = Number(form.couponSR || 0);
     const depositEGP = Number(form.depositEGP || 0);
     const discountSR = Number(form.discountSR || 0);
-    const paidToWebsite = Number(form.paidToWebsite || 0);
+    const extraSR = Number(form.extraSR || 0);
 
-    const extraEGP = extraSR * 2;
+    // Calculate net SR after discount deduction
+    const netSR = totalSR - discountSR;
 
-    // Calculate net SR after coupon deduction
-    const netSR = totalSR - couponSR - discountSR;
-
-    let orderEGP = 0;
-    let paidToWebsiteEGP = 0;
+    let baseEGP = 0;
     const threshold = systemSettings.wholesaleThreshold || 1500;
 
     if (form.clientType === "Wholesale") {
       if (form.orderType === "B") {
-        orderEGP = netSR > threshold 
+        baseEGP = totalSR > threshold 
           ? (netSR * (systemSettings.barryWholesaleAbove1500 || 12.25))
           : netSR * (systemSettings.barryWholesaleBelow1500 || 12.5);
       } else if (form.orderType === "G") {
-        orderEGP = netSR > threshold
+        baseEGP = totalSR > threshold
           ? netSR * (systemSettings.gawyWholesaleAbove1500 || 13.5)
           : netSR * (systemSettings.gawyWholesaleBelow1500 || 14);
       }
     } else if (form.clientType === "Retail") {
-      orderEGP = form.orderType === "B" 
+      baseEGP = form.orderType === "B" 
         ? netSR * (systemSettings.barryRetail || 14.5)
         : netSR * (systemSettings.gawyRetail || 15.5);
     }
 
-     if (form.clientType === "Wholesale") {
-      if (form.orderType === "B") {
-        paidToWebsiteEGP = paidToWebsite > threshold 
-          ? (paidToWebsite * (systemSettings.barryWholesaleAbove1500 || 12.25))
-          : paidToWebsite * (systemSettings.barryWholesaleBelow1500 || 12.5);
-      } else if (form.orderType === "G") {
-        paidToWebsiteEGP = paidToWebsite > threshold
-          ? paidToWebsite * (systemSettings.gawyWholesaleAbove1500 || 13.5)
-          : paidToWebsite * (systemSettings.gawyWholesaleBelow1500 || 14);
-      }
-    } else if (form.clientType === "Retail") {
-      paidToWebsiteEGP = form.orderType === "B" 
-        ? paidToWebsite * (systemSettings.barryRetail || 14.5)
-        : paidToWebsite * (systemSettings.gawyRetail || 15.5);
-    }
+    // Calculate extraEGP (extraSR * 2)
+    const extraEGP = extraSR * 2;
 
-    const totalOrderEGP = orderEGP + extraEGP;
-    const outstandingEGP = totalOrderEGP - (depositEGP)-paidToWebsiteEGP;
-    setTotals({ extraEGP, totalOrderEGP, outstandingEGP });
+    // Calculate total order EGP (base EGP + extra EGP)
+    const totalOrderEGP = baseEGP + extraEGP;
+    const outstandingEGP = totalOrderEGP - depositEGP;
+
+    setTotals({ 
+      baseEGP, 
+      extraEGP, 
+      totalOrderEGP, 
+      outstandingEGP 
+    });
   }, [
-    form.totalSR, form.extraSR, form.couponSR, form.depositEGP, 
-    form.discountSR, form.paidToWebsite, form.clientType, form.orderType,
-    systemSettings, settingsLoading
+    form.totalSR, 
+    form.depositEGP, 
+    form.discountSR, 
+    form.extraSR,
+    form.clientType, 
+    form.orderType,
+    systemSettings, 
+    settingsLoading
   ]);
 
-  // Handle order submit
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+ // Handle order submit
+const handleSubmit = async (e) => {
+  e.preventDefault();
 
-    if (!validateMandatoryFields()) {
-      setMessage("⚠️ Please fill all required fields");
-      return;
-    }
+  if (!validateMandatoryFields()) {
+    setMessage("⚠️ Please fill all required fields");
+    return;
+  }
 
-    const finalAccountName = form.newAccount.trim() || form.accountName;
-    if (!finalAccountName) {
-      setErrors(prev => ({ ...prev, account: "Account is required" }));
-      setMessage("⚠️ Please select or enter an account name");
-      return;
-    }
+  try {
+    const prefilledData = sessionStorage.getItem('prefilledOrderData');
+    const existingOrderData = prefilledData ? JSON.parse(prefilledData) : null;
+    const existingOrderId = existingOrderData?.existingOrderId;
 
-    try {
-      if (form.newAccount.trim()) {
-        const accDocRef = await addDoc(collection(db, "accounts"), { name: form.newAccount.trim() });
-        setAccounts([...accounts, { id: accDocRef.id, name: form.newAccount.trim() }]);
-      }
+    // Find customer to get customerCode
+    const selectedCustomerData = customers.find(c => c.id === form.customerId);
+    const customerCode = selectedCustomerData?.customerCode || "";
 
-      const prefilledData = sessionStorage.getItem('prefilledOrderData');
-      const existingOrderData = prefilledData ? JSON.parse(prefilledData) : null;
-      const existingOrderId = existingOrderData?.existingOrderId;
+    let orderId;
+    let firestoreOrderId;
+    let orderDocRef;
 
-      let orderId;
-      let firestoreOrderId;
-      let orderDocRef;
-
-      if (existingOrderId && existingOrderId !== "NEW_ORDER") {
-        firestoreOrderId = existingOrderId;
-        const orderRef = doc(db, "orders", firestoreOrderId);
-        const existingOrderSnap = await getDoc(orderRef);
-        if (existingOrderSnap.exists()) {
-          const existingOrderData = existingOrderSnap.data();
-          orderId = existingOrderData.orderId;
-        } else {
-          throw new Error("Existing order not found");
-        }
-        
-        await updateDoc(orderRef, {
-          ...form,
-          accountName: finalAccountName,
-          status: "Requested",
-          trackingNumbers: trackingNumbers.filter((t) => t),
-          totalEGP: totals.totalOrderEGP,
-          outstanding: totals.outstandingEGP,
-          extraEGP: totals.extraEGP,
-          paidToWebsite: Number(form.paidToWebsite || 0),
-          couponSR: Number(form.couponSR || 0),
-          updatedAt: serverTimestamp(),
-        });
-
-        orderDocRef = orderRef;
+    if (existingOrderId && existingOrderId !== "NEW_ORDER") {
+      firestoreOrderId = existingOrderId;
+      const orderRef = doc(db, "orders", firestoreOrderId);
+      const existingOrderSnap = await getDoc(orderRef);
+      if (existingOrderSnap.exists()) {
+        const existingOrderData = existingOrderSnap.data();
+        orderId = existingOrderData.orderId;
       } else {
-        orderId = await generateOrderId(form.orderType);
-        firestoreOrderId = null;
-
-        const newOrder = {
-          ...form,
-          accountName: finalAccountName,
-          orderId,
-          createdAt: serverTimestamp(),
-          status: "Requested",
-          trackingNumbers: trackingNumbers.filter((t) => t),
-          totalEGP: totals.totalOrderEGP,
-          outstanding: totals.outstandingEGP,
-          extraEGP: totals.extraEGP,
-          paidToWebsite: Number(form.paidToWebsite || 0),
-          couponSR: Number(form.couponSR || 0),
-          uploadId: sessionStorage.getItem('uploadId') || null,
-        };
-
-        orderDocRef = await addDoc(collection(db, "orders"), newOrder);
-        firestoreOrderId = orderDocRef.id;
+        throw new Error("Existing order not found");
       }
-
-      if (sessionStorage.getItem('uploadId')) {
-        sessionStorage.removeItem('prefilledOrderData');
-        sessionStorage.removeItem('uploadId');
-      }
-
-      setMessage(`✅ Order ${existingOrderId ? 'updated' : 'added'} successfully! Order ID: ${orderId} (Status: Requested)`);
-
-      setForm({
-        customerId: "",
-        customerName: "",
-        phone: "",
-        clientType: "",
-        totalSR: "",
-        depositEGP: "",
-        orderType: "B",
-        accountName: "",
-        newAccount: "",
-        extraSR: "",
-        couponSR: "",
-        discountSR: "",
-        pieces: "",
-        paidToWebsite: "",
+      
+      await updateDoc(orderRef, {
+        ...form,
+        customerCode: customerCode, // Add customerCode
+        status: "Requested",
+        totalEGP: totals.totalOrderEGP,
+        outstanding: totals.outstandingEGP,
+        discountSR: Number(form.discountSR || 0),
+        extraSR: Number(form.extraSR || 0),
+        extraEGP: totals.extraEGP,
+        updatedAt: serverTimestamp(),
       });
-      setTrackingNumbers([""]);
-      setSelectedCustomer(null);
-      setTotals({ extraEGP: 0, totalOrderEGP: 0, outstandingEGP: 0 });
-      setErrors({});
-    } catch (err) {
-      setMessage("❌ Error " + (existingOrderId ? 'updating' : 'adding') + " order.");
-    }
-  };
 
+      orderDocRef = orderRef;
+    } else {
+      orderId = await generateOrderId(form.orderType);
+      firestoreOrderId = null;
+
+      const newOrder = {
+        ...form,
+        customerCode: customerCode, // Add customerCode
+        orderId,
+        createdAt: serverTimestamp(),
+        status: "Requested",
+        totalEGP: totals.totalOrderEGP,
+        outstanding: totals.outstandingEGP,
+        discountSR: Number(form.discountSR || 0),
+        extraSR: Number(form.extraSR || 0),
+        extraEGP: totals.extraEGP,
+        uploadId: sessionStorage.getItem('uploadId') || null,
+      };
+
+      orderDocRef = await addDoc(collection(db, "orders"), newOrder);
+      firestoreOrderId = orderDocRef.id;
+    }
+
+    if (sessionStorage.getItem('uploadId')) {
+      sessionStorage.removeItem('prefilledOrderData');
+      sessionStorage.removeItem('uploadId');
+    }
+
+    setMessage(`✅ Order ${existingOrderId ? 'updated' : 'added'} successfully! Order ID: ${orderId} (Status: Requested)`);
+
+    setForm({
+      customerId: "",
+      customerName: "",
+      phone: "",
+      clientType: "",
+      totalSR: "",
+      depositEGP: "",
+      orderType: "B",
+      discountSR: "",
+      pieces: "",
+      extraSR: "",
+      customerCode: "",
+    });
+    setSelectedCustomer(null);
+    setTotals({ 
+      totalOrderEGP: 0, 
+      outstandingEGP: 0,
+      extraEGP: 0,
+      baseEGP: 0 
+    });
+    setErrors({});
+  } catch (err) {
+    console.error("Error:", err);
+    setMessage("❌ Error " + (existingOrderId ? 'updating' : 'adding') + " order: " + err.message);
+  }
+};
   const customStyles = {
     control: (base, state) => ({
       ...base,
@@ -458,7 +455,10 @@ export default function AddOrder() {
         {!newCustomerMode ? (
           <div>
             <Select
-              options={customers.map((c) => ({ value: c.id, label: `${c.name} (${c.customerCode})` }))}
+              options={customers.map((c) => ({ 
+                value: c.id, 
+                label: `${c.name} (${c.customerCode || c.id})` 
+              }))}
               value={selectedCustomer}
               onChange={handleCustomerChange}
               placeholder="Search and select customer..."
@@ -507,44 +507,6 @@ export default function AddOrder() {
             </div>
           </div>
         )}
-      </div>
-
-      {/* Account */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-        <div>
-          <label className="block text-gray-700 font-medium mb-2">
-            Select Account <span className="text-red-500">*</span>
-          </label>
-          <select
-            value={form.accountName}
-            onChange={(e) => {
-              setForm({ ...form, accountName: e.target.value, newAccount: "" });
-              if (errors.account) {
-                setErrors(prev => ({ ...prev, account: "" }));
-              }
-            }}
-            className={`border border-gray-300 rounded-lg p-2 w-full focus:ring focus:ring-blue-200 ${errors.account ? "border-red-500" : ""}`}
-          >
-            <option value="">Select Account</option>
-            {accounts.map((acc) => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
-          </select>
-          {errors.account && <p className="text-red-500 text-sm mt-1">{errors.account}</p>}
-        </div>
-        <div>
-          <Input
-            label="Or Add New Account"
-            value={form.newAccount}
-            onChange={(e) => {
-              setForm({ ...form, newAccount: e.target.value, accountName: "" });
-              if (errors.account) {
-                setErrors(prev => ({ ...prev, account: "" }));
-              }
-            }}
-            placeholder="Enter new account name"
-            className={errors.account ? "border-red-500" : ""}
-          />
-          {errors.account && <p className="text-red-500 text-sm mt-1">{errors.account}</p>}
-        </div>
       </div>
 
       {/* Order Details */}
@@ -604,52 +566,39 @@ export default function AddOrder() {
         </div>
       </div>
 
-      {/* Extra / Coupon / Discount / Paid To Website */}
+      {/* Discount & Extra SR */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
-        <Input label="Extra (SR)" type="number" value={form.extraSR} onChange={(e) => setForm({ ...form, extraSR: e.target.value })} />
-        <Input
-          label="Coupon (SR)"
-          type="number"
-          value={form.couponSR}
-          onChange={(e) => setForm({ ...form, couponSR: e.target.value })}
+        <Input 
+          label="Discount (SR)" 
+          type="number" 
+          value={form.discountSR} 
+          onChange={(e) => setForm({ ...form, discountSR: e.target.value })} 
         />
-        <Input label="Discount (SR)" type="number" value={form.discountSR} onChange={(e) => setForm({ ...form, discountSR: e.target.value })} />
-        <Input
-          label="Paid To Website (SR)"
-          type="number"
-          value={form.paidToWebsite}
-          onChange={(e) => setForm({ ...form, paidToWebsite: e.target.value })}
+        <Input 
+          label="Extra (SR)" 
+          type="number" 
+          value={form.extraSR} 
+          onChange={(e) => setForm({ ...form, extraSR: e.target.value })} 
         />
+        <div className="sm:col-span-2"></div>
       </div>
 
       {/* Totals */}
-      <div className="mb-4 text-gray-700">
-        <p>Extra (EGP): {totals.extraEGP.toFixed(2)}</p>
-        <p>Total Order (EGP): {totals.totalOrderEGP.toFixed(2)}</p>
-        <p>Outstanding Amount (EGP): {totals.outstandingEGP.toFixed(2)}</p>
-      </div>
-
-      {/* Tracking Numbers */}
-      <div className="mb-6">
-        <label className="block text-gray-700 font-medium mb-2">Tracking Numbers</label>
-        {trackingNumbers.map((tracking, index) => (
-          <div key={index} className="flex gap-2 mb-2">
-            <input
-              type="text"
-              value={tracking}
-              onChange={(e) => {
-                const updated = [...trackingNumbers];
-                updated[index] = e.target.value;
-                setTrackingNumbers(updated);
-              }}
-              placeholder={`Tracking Number ${index + 1}`}
-              className="border border-gray-300 rounded-lg p-2 w-full focus:ring focus:ring-blue-200"
-            />
-            {index === trackingNumbers.length - 1 && (
-              <button type="button" onClick={() => setTrackingNumbers([...trackingNumbers, ""])} className="bg-blue-500 text-white px-3 py-1 rounded-lg hover:bg-blue-600">+</button>
-            )}
+      <div className="mb-4 text-gray-700 bg-gray-50 p-4 rounded-lg">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div>
+            <p className="font-medium">Base Order (EGP): <span className="text-blue-600">{totals.baseEGP.toFixed(2)}</span></p>
+            <p className="text-sm text-gray-500">(Total SR - Discount SR) × Conversion Rate</p>
           </div>
-        ))}
+          <div>
+            <p className="font-medium">Extra (EGP): <span className="text-green-600">{totals.extraEGP.toFixed(2)}</span></p>
+            <p className="text-sm text-gray-500">(Extra SR × 2)</p>
+          </div>
+        </div>
+        <div className="mt-3 pt-3 border-t border-gray-200">
+          <p className="font-semibold text-lg">Total Order (EGP): <span className="text-blue-700">{totals.totalOrderEGP.toFixed(2)}</span></p>
+          <p className="font-medium">Outstanding Amount (EGP): <span className={totals.outstandingEGP > 0 ? "text-red-600" : "text-green-600"}>{totals.outstandingEGP.toFixed(2)}</span></p>
+        </div>
       </div>
 
       {/* Submit */}

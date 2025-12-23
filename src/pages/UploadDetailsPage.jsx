@@ -96,7 +96,7 @@ export default function UploadDetailsPage() {
 
         if (order.status === "Requested") {
           await updateDoc(orderRef, {
-            status: "Order placed",
+            status: "Order Placed",
             depositEGP: newDeposit,
             outstanding: newOutstanding
           });

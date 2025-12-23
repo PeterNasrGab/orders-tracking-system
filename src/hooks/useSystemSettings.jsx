@@ -11,10 +11,15 @@ const defaultSettings = {
   barryRetail: 14.5,
   gawyRetail: 15.5,
   
+  // Additional Charges - NEW FIELDS
+  paidToWebsite: 12,
+  shipping: 12.7,
+  coupon: 12,
+  
   // Order Statuses
   orderStatuses: [
     "Requested",
-    "Order placed", 
+    "Order Placed", 
     "Shipped to Egypt",
     "Delivered to Egypt",
     "In Distribution",
@@ -30,10 +35,59 @@ const defaultSettings = {
   // Upload Statuses
   uploadStatuses: ["Under Approval", "Approved", "Rejected"],
   
-  // WhatsApp Messages
-  orderPlacedMessage: "📦 Hello {customerName}, your order ({orderId}) has been *placed* successfully! ✅",
+  // WhatsApp Messages - UPDATED WITH NEW TEMPLATES
+  // For Wholesale (Gomla) users
+  orderPlacedMessageWholesale: `عدد القطع ({pieces})
+قيمة الطلب بالريال {totalSR}
+بدون كود {extraSR}
+قيمة الطلب بالمصرى {totalEGP}
+الاجمالى المصرى {totalEGPPlusExtra}
+العربون {deposit}
+المتبقى من الطلب {outstanding}
+بعد دفع العربون، يرجى إرفاق لقطة شاشة للمعاملة وعناصر الطلب عبر الرابط التالي للتأكيد: http://localhost:5173/upload`,
+
+  // For Retail with no deposit
+  orderPlacedMessageRetailNoDeposit: `Hi {customerName} ({customerCode})
+This is a confirmation message from us to make sure that every detail about your order is exactly as you wanted.
+no of items: {pieces}
+total: {totalEGP}
+
+And the photo below is the one you requested.
+
+You won't be able to change your order once you confirm.
+
+You are marked as a VIP client on our list..no deposit is needed.
+
+Thank you for purchasing from us.
+Youla's Yard.`,
+
+  // For Retail with deposit
+  orderPlacedMessageRetailWithDeposit: `Hi {customerName} ({customerCode})
+This is a confirmation message from us to make sure that every detail about your order is exactly as you wanted.
+no of items: {pieces}
+total: {totalEGP}
+paid deposit: {deposit}
+outstanding: {outstanding}
+
+And the photo below is the one you requested.
+
+You won't be able to change your order once you confirm.
+Instapay or wallet
+01228582791
+Youlawilliam
+Youlawilliam137
+
+A 50% deposit is required to complete the ordering process.
+After deposit payment, kindly attach transaction screenshot and order items to the following link for confirmation: http://localhost:5173/upload
+
+Thank you for purchasing from us.
+Youla's Yard.`,
+
+  // Keep existing messages for backward compatibility
+  orderPlacedMessage: "📦 Hello {customerName} ({customerCode}), your order ({orderId}) has been *placed* successfully! ✅",
   paymentRejectedMessage: "Order not placed as attached deposit photo is inconsistent with the entered payment amount.\n\nKindly re-upload the right deposit amount on the same link",
-   inDistributionMessage: "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: http://localhost:5173/upload",
+  inDistributionMessage: "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: http://localhost:5173/upload",
+  
   // Thresholds
   wholesaleThreshold: 1500,
   
