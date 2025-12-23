@@ -700,9 +700,6 @@ Youla's Yard.`;
         const message = getWhatsAppMessage(order);
         const encodedMessage = encodeURIComponent(message);
         window.open(`https://wa.me/${cleanPhone}?text=${encodedMessage}`, "_blank");
-        
-        // Log for debugging
-        console.log(`Order ${order.orderId} - Deposit: ${order.depositEGP}, Outstanding: ${order.outstanding}`);
       }
 
       successfulUpdates.push({

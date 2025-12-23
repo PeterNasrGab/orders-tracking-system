@@ -410,7 +410,6 @@ const handleSubmit = async (e) => {
     });
     setErrors({});
   } catch (err) {
-    console.error("Error:", err);
     setMessage("❌ Error " + (existingOrderId ? 'updating' : 'adding') + " order: " + err.message);
   }
 };

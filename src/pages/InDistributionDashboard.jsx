@@ -461,7 +461,6 @@ const calculateDynamicRowValuesForOrders = (orderIds) => {
           const extraSR = Number(order.extraSR) || 0;
           
            const sheetInfo = findOrderInSheets(order.id, sheetsList);
-      console.log(`Order ${order.id} sheet info:`, sheetInfo?.code || 'No sheet');
           const clientKey = `${clientName}-${orderType}`;
           
           if (!clientsMap.has(clientKey)) {
@@ -811,15 +810,10 @@ const findOrderInSheets = (orderId, sheetsList) => {
 
  // Update the getSheetInfoForOrder function to better debug and match
 const getSheetInfoForOrder = (orderFirestoreId, sheetsDataParam = sheetsData) => {
-  console.log('Looking for sheet for order:', orderFirestoreId);
-  console.log('Available sheets:', sheetsDataParam.length);
-  
-  // Debug: log all sheets and their orders
+ 
   sheetsDataParam.forEach((sheet, index) => {
-    console.log(`Sheet ${index}: ${sheet.code} has ${sheet.orders?.length || 0} orders`);
-    if (sheet.orders) {
+       if (sheet.orders) {
       sheet.orders.forEach((order, oIndex) => {
-        console.log(`  Order ${oIndex}: id=${order.id}, orderId=${order.orderId}`);
       });
     }
   });
@@ -845,7 +839,6 @@ const getSheetInfoForOrder = (orderFirestoreId, sheetsDataParam = sheetsData) =>
   });
   
   if (sheet) {
-    console.log('Found sheet:', sheet.code, 'for order', orderFirestoreId);
     return {
       code: sheet.code,
       id: sheet.id,
@@ -854,7 +847,6 @@ const getSheetInfoForOrder = (orderFirestoreId, sheetsDataParam = sheetsData) =>
     };
   }
   
-  console.log('No sheet found for order:', orderFirestoreId);
   return null;
 };
   // Handle paid after delivery change - update temp value immediately
