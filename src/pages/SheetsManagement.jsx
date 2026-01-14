@@ -2,16 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { db } from "../firebase";
 import { collection, getDocs, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
-import { FiArrowLeft, FiTrash2, FiEye, FiPackage, FiUsers, FiCalendar, FiTag } from "react-icons/fi";
+import { FiArrowLeft, FiTrash2, FiEye, FiPackage, FiUsers, FiCalendar, FiTag, FiDollarSign } from "react-icons/fi";
 
 export default function SheetsManagement() {
   const [sheets, setSheets] = useState([]);
+  const [allOrders, setAllOrders] = useState([]); // Store all orders for lookup
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchSheets();
+    fetchAllOrders();
   }, []);
+
+  const fetchAllOrders = async () => {
+    try {
+      const ordersSnap = await getDocs(collection(db, "orders"));
+      const ordersList = ordersSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setAllOrders(ordersList);
+    } catch (error) {
+      throw error;
+    }
+  };
 
   const fetchSheets = async () => {
     try {
@@ -33,6 +48,7 @@ export default function SheetsManagement() {
             ...order,
             pieces: Number(order.pieces) || 0,
             outstanding: Number(order.outstanding) || 0
+            // Note: totalSR might not be in the embedded order data
           })) || []
         };
       });
@@ -99,29 +115,55 @@ export default function SheetsManagement() {
   const getSheetStats = (sheet) => {
     // Use sheet.totalPieces if it exists and is a valid number
     let totalPieces = Number(sheet.totalPieces) || 0;
+    let totalSR = 0;
     
-    // Also calculate from orders as backup
-    if (totalPieces === 0 && sheet.orders?.length > 0) {
-      totalPieces = sheet.orders.reduce((sum, order) => {
-        // Ensure pieces is treated as number
+    // Calculate from orders
+    if (sheet.orders?.length > 0) {
+      // Recalculate total pieces from orders
+      const calculatedPieces = sheet.orders.reduce((sum, order) => {
         const pieces = Number(order.pieces) || 0;
         return sum + pieces;
+      }, 0);
+      
+      // Use calculated pieces if sheet.totalPieces is 0 or invalid
+      if (totalPieces === 0 || isNaN(totalPieces)) {
+        totalPieces = calculatedPieces;
+      }
+      
+      // Calculate total SR from orders
+      // We need to look up the full order details from allOrders
+      totalSR = sheet.orders.reduce((sum, sheetOrder) => {
+        // Find the full order in allOrders using orderId or id
+        const fullOrder = allOrders.find(order => 
+          order.id === sheetOrder.id || order.orderId === sheetOrder.id
+        );
+        
+        if (fullOrder) {
+          // Use totalSR from the full order
+          return sum + (Number(fullOrder.totalSR) || 0);
+        } else if (sheetOrder.totalSR) {
+          // Fallback to totalSR from sheet order if it exists
+          return sum + (Number(sheetOrder.totalSR) || 0);
+        }
+        return sum;
       }, 0);
     }
     
     const totalOutstanding = sheet.orders?.reduce((sum, order) => {
-      // Convert outstanding to number
       const outstanding = Number(order.outstanding) || 0;
       return sum + outstanding;
     }, 0) || 0;
     
-    return { totalPieces, totalOutstanding };
+    return { totalPieces, totalSR, totalOutstanding };
   };
 
   const formatNumber = (num) => {
     const number = Number(num);
     if (isNaN(number)) return "0";
-    return number.toLocaleString();
+    return number.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    });
   };
 
   if (loading) {
@@ -223,6 +265,16 @@ export default function SheetsManagement() {
                       
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-2 text-gray-600">
+                          <FiDollarSign size={18} />
+                          <span>Total SR</span>
+                        </div>
+                        <span className="font-bold text-green-700">
+                          SR {formatNumber(stats.totalSR)}
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2 text-gray-600">
                           <FiTag size={18} />
                           <span>Outstanding</span>
                         </div>
@@ -260,6 +312,61 @@ export default function SheetsManagement() {
                 </div>
               );
             })}
+          </div>
+        )}
+        
+        {/* Summary Stats */}
+        {sheets.length > 0 && (
+          <div className="mt-8 bg-white rounded-2xl shadow-lg p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Summary</h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="flex items-center space-x-2 mb-2">
+                  <FiPackage className="text-blue-600" size={20} />
+                  <span className="text-gray-600 font-medium">Total Sheets</span>
+                </div>
+                <p className="text-2xl font-bold text-blue-700">{sheets.length}</p>
+              </div>
+              
+              <div className="bg-green-50 p-4 rounded-lg">
+                <div className="flex items-center space-x-2 mb-2">
+                  <FiPackage className="text-green-600" size={20} />
+                  <span className="text-gray-600 font-medium">Total Pieces</span>
+                </div>
+                <p className="text-2xl font-bold text-green-700">
+                  {formatNumber(sheets.reduce((sum, sheet) => {
+                    const stats = getSheetStats(sheet);
+                    return sum + stats.totalPieces;
+                  }, 0))}
+                </p>
+              </div>
+              
+              <div className="bg-purple-50 p-4 rounded-lg">
+                <div className="flex items-center space-x-2 mb-2">
+                  <FiDollarSign className="text-purple-600" size={20} />
+                  <span className="text-gray-600 font-medium">Total SR</span>
+                </div>
+                <p className="text-2xl font-bold text-purple-700">
+                  SR {formatNumber(sheets.reduce((sum, sheet) => {
+                    const stats = getSheetStats(sheet);
+                    return sum + stats.totalSR;
+                  }, 0))}
+                </p>
+              </div>
+              
+              <div className="bg-yellow-50 p-4 rounded-lg">
+                <div className="flex items-center space-x-2 mb-2">
+                  <FiTag className="text-yellow-600" size={20} />
+                  <span className="text-gray-600 font-medium">Total Outstanding</span>
+                </div>
+                <p className="text-2xl font-bold text-yellow-700">
+                  EGP {formatNumber(sheets.reduce((sum, sheet) => {
+                    const stats = getSheetStats(sheet);
+                    return sum + stats.totalOutstanding;
+                  }, 0).toFixed(2))}
+                </p>
+              </div>
+            </div>
           </div>
         )}
       </div>

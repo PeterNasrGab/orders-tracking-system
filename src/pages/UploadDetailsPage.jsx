@@ -170,7 +170,7 @@ export default function UploadDetailsPage() {
         "Order not placed as attached deposit photo is inconsistent with the entered payment amount.\n\nKindly re-upload the right deposit amount on the same link";
 
       const encodedMessage = encodeURIComponent(rejectionMessage);
-      window.open(`https://wa.me/${customerPhone}?text=${encodedMessage}`, "_blank");
+      window.open(`https://wa.me/2${customerPhone}?text=${encodedMessage}`, "_blank");
 
       const { error: updateError } = await supabase
         .from('uploads')

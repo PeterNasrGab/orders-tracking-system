@@ -28,7 +28,7 @@ export default function AddOrder() {
     totalSR: "",
     depositEGP: "",
     orderType: "B",
-    discountSR: "",
+    discountEGP: "",
     pieces: "",
     extraSR: "",
     customerCode: "",
@@ -43,8 +43,20 @@ export default function AddOrder() {
     outstandingEGP: 0,
     extraEGP: 0,
     baseEGP: 0,
+    conversionRate: 0,
   });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [formChanged, setFormChanged] = useState(false);
+
+  // Helper function to round to nearest multiple of 5
+  const roundToNearest5 = (number) => {
+    return Math.round(number / 5) * 5;
+  };
+
+  // Helper function to ensure whole number (no decimals)
+  const toWholeNumber = (number) => {
+    return Math.round(parseFloat(number) || 0);
+  };
 
   // Load customers
   useEffect(() => {
@@ -82,7 +94,8 @@ export default function AddOrder() {
           totalSR: data.totalSR || "",
           pieces: data.pieces || "",
           extraSR: data.extraSR || "",
-           customerCode: data.customerCode || "",
+          discountEGP: data.discountEGP || data.discountSR || "",
+          customerCode: data.customerCode || "",
         }));
 
         if (data.customerId && customers.length > 0) {
@@ -97,6 +110,7 @@ export default function AddOrder() {
         }
 
         setMessage("✅ Order data pre-filled from upload. Please complete the order details.");
+        setFormChanged(prev => !prev);
       } catch (error) {
         throw error;
       }
@@ -116,7 +130,7 @@ export default function AddOrder() {
           if (customerOption) {
             const selectedOption = {
               value: customerOption.id,
-              label: `${customerOption.name} (${customerOption.customerCode})`
+              label: `${customerOption.name} (${customerCode})`
             };
             setSelectedCustomer(selectedOption);
           }
@@ -127,22 +141,142 @@ export default function AddOrder() {
     }
   }, [customers, selectedCustomer]);
 
-// Customer select
-const handleCustomerChange = (selectedOption) => {
-  const selectedCustomer = customers.find((c) => c.id === selectedOption.value);
-  setForm((prev) => ({
-    ...prev,
-    customerId: selectedCustomer.id,
-    customerName: selectedCustomer.name,
-    phone: selectedCustomer.phone,
-    clientType: selectedCustomer.clientType,
-    customerCode: selectedCustomer.customerCode,
-  }));
-  setSelectedCustomer(selectedOption);
-  if (errors.customerId) {
-    setErrors(prev => ({ ...prev, customerId: "" }));
-  }
-};
+  // Calculate totals whenever form changes - UPDATED WITH ROUNDING LOGIC
+  useEffect(() => {
+    if (settingsLoading || !systemSettings) return;
+
+    // Parse all numeric values as whole numbers (remove decimals)
+    const totalSR = toWholeNumber(form.totalSR);
+    const depositEGP = toWholeNumber(form.depositEGP);
+    const discountEGP = toWholeNumber(form.discountEGP);
+    const extraSR = toWholeNumber(form.extraSR);
+
+    // Calculate conversion rate based on client type and order type
+    let conversionRate = 0;
+    const threshold = systemSettings.wholesaleThreshold || 1500;
+
+    if (form.clientType && form.orderType) {
+      if (form.clientType === "Wholesale") {
+        if (form.orderType === "B") {
+          conversionRate = totalSR > threshold 
+            ? (systemSettings.barryWholesaleAbove1500 || 12.25)
+            : (systemSettings.barryWholesaleBelow1500 || 12.5);
+        } else if (form.orderType === "G") {
+          conversionRate = totalSR > threshold
+            ? (systemSettings.gawyWholesaleAbove1500 || 13.5)
+            : (systemSettings.gawyWholesaleBelow1500 || 14);
+        }
+      } else if (form.clientType === "Retail") {
+        conversionRate = form.orderType === "B" 
+          ? (systemSettings.barryRetail || 14.5)
+          : (systemSettings.gawyRetail || 15.5);
+      }
+    }
+
+    // Calculate Base EGP before rounding: (Total SR × Conversion Rate) - Discount EGP
+    const baseBeforeDiscount = totalSR * conversionRate;
+    const effectiveDiscount = Math.abs(discountEGP); // Always positive discount
+    const baseEGPBeforeRounding = Math.max(0, baseBeforeDiscount - effectiveDiscount);
+
+    // Calculate Extra EGP: (Extra SR × 2) - always whole number
+    let extraEGP = toWholeNumber(extraSR * 2);
+
+    // Calculate Total Order EGP before rounding: Base EGP + Extra EGP
+    const totalOrderEGPBeforeRounding = baseEGPBeforeRounding + extraEGP;
+
+    // For Retail customers, round Base EGP and Total Order EGP to nearest multiple of 5
+    let baseEGP, totalOrderEGP;
+    
+    if (form.clientType === "Retail") {
+      baseEGP = roundToNearest5(baseEGPBeforeRounding);
+      totalOrderEGP = roundToNearest5(totalOrderEGPBeforeRounding);
+    } else {
+      // For Wholesale or no client type, just ensure whole numbers (no decimals)
+      baseEGP = toWholeNumber(baseEGPBeforeRounding);
+      totalOrderEGP = toWholeNumber(totalOrderEGPBeforeRounding);
+    }
+
+    // Calculate Outstanding EGP: Total Order EGP - Deposit EGP
+    const outstandingEGPBeforeRounding = Math.max(0, totalOrderEGP - depositEGP);
+    
+    // For Retail customers, round Outstanding to nearest multiple of 5
+    let outstandingEGP;
+    if (form.clientType === "Retail") {
+      outstandingEGP = roundToNearest5(outstandingEGPBeforeRounding);
+    } else {
+      outstandingEGP = toWholeNumber(outstandingEGPBeforeRounding);
+    }
+
+    // Ensure all values are whole numbers (safety check)
+    baseEGP = toWholeNumber(baseEGP);
+    totalOrderEGP = toWholeNumber(totalOrderEGP);
+    outstandingEGP = toWholeNumber(outstandingEGP);
+    extraEGP = toWholeNumber(extraEGP);
+
+    setTotals({ 
+      baseEGP, 
+      extraEGP, 
+      totalOrderEGP, 
+      outstandingEGP,
+      conversionRate
+    });
+  }, [
+    form.totalSR, 
+    form.depositEGP, 
+    form.discountEGP,
+    form.extraSR,
+    form.clientType, 
+    form.orderType,
+    systemSettings, 
+    settingsLoading,
+    formChanged
+  ]);
+
+  // Customer select
+  const handleCustomerChange = (selectedOption) => {
+    const selectedCustomer = customers.find((c) => c.id === selectedOption.value);
+    setForm((prev) => ({
+      ...prev,
+      customerId: selectedCustomer.id,
+      customerName: selectedCustomer.name,
+      phone: selectedCustomer.phone,
+      clientType: selectedCustomer.clientType,
+      customerCode: selectedCustomer.customerCode,
+    }));
+    setSelectedCustomer(selectedOption);
+    if (errors.customerId) {
+      setErrors(prev => ({ ...prev, customerId: "" }));
+    }
+    setFormChanged(prev => !prev);
+  };
+
+  // Handle form field changes
+  const handleFormChange = (field, value) => {
+    // For numeric fields, allow decimal input for SR values but convert to whole numbers in calculation
+    if (["totalSR", "depositEGP", "discountEGP", "pieces", "extraSR"].includes(field)) {
+      // Allow numbers and decimal point for SR values
+      if (["totalSR", "extraSR", "pieces"].includes(field)) {
+        value = value.replace(/[^\d.]/g, '');
+        // Ensure only one decimal point
+        const parts = value.split('.');
+        if (parts.length > 2) {
+          value = parts[0] + '.' + parts.slice(1).join('');
+        }
+      } else if (field === "discountEGP") {
+        value = value.replace(/[^\d-]/g, '');
+      } else if (field === "depositEGP") {
+        value = value.replace(/[^\d]/g, '');
+      }
+    }
+    
+    setForm(prev => ({ ...prev, [field]: value }));
+    setFormChanged(prev => !prev);
+    
+    // Clear field-specific error
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: "" }));
+    }
+  };
 
   // Validate new customer
   const validateCustomer = () => {
@@ -161,10 +295,12 @@ const handleCustomerChange = (selectedOption) => {
     if (!form.customerId) {
       newErrors.customerId = "Customer is required";
     }
-    if (!form.totalSR || Number(form.totalSR) <= 0) {
+    const totalSRValue = parseFloat(form.totalSR) || 0;
+    if (!form.totalSR || totalSRValue <= 0) {
       newErrors.totalSR = "Total SR is required and must be greater than 0";
     }
-    if (!form.pieces || Number(form.pieces) <= 0) {
+    const piecesValue = parseFloat(form.pieces) || 0;
+    if (!form.pieces || piecesValue <= 0) {
       newErrors.pieces = "Pieces is required and must be greater than 0";
     }
     setErrors(newErrors);
@@ -192,27 +328,22 @@ const handleCustomerChange = (selectedOption) => {
 
   // Generate customer code using sequential numbers (WS-1, WS-2, RE-1, RE-2)
   const generateCustomerCode = async (type) => {
-    // Get prefix from system settings or use defaults
     const prefix = type === "Wholesale" 
       ? (systemSettings.customerCodePrefixWholesale || "WS")
       : (systemSettings.customerCodePrefixRetail || "RE");
     
-    // Query customers of the same type
     const q = query(collection(db, "customers"), where("clientType", "==", type));
     const snap = await getDocs(q);
     
-    // Extract existing codes with the same prefix
     const existingCodes = snap.docs
       .map((doc) => doc.data().customerCode)
       .filter((code) => code && code.startsWith(prefix))
       .map((code) => {
-        // Extract number from code like "WS-1" or "RE-12"
         const match = code.match(new RegExp(`^${prefix}-(\\d+)$`));
         return match ? parseInt(match[1], 10) : 0;
       })
       .filter((n) => !isNaN(n) && n > 0);
     
-    // Find the next sequential number
     const nextNumber = existingCodes.length > 0 ? Math.max(...existingCodes) + 1 : 1;
     
     return `${prefix}-${nextNumber}`;
@@ -238,12 +369,11 @@ const handleCustomerChange = (selectedOption) => {
       const newCustomer = { 
         id: docRef.id, 
         ...newCust,
-        customerCode // Make sure customerCode is included
+        customerCode
       };
       setCustomers(prev => [...prev, newCustomer].sort((a, b) => a.name.localeCompare(b.name)));
       setForm((prev) => ({ ...prev, customerId: docRef.id }));
       
-      // Auto-select the newly created customer
       const selectedOption = {
         value: docRef.id,
         label: `${form.customerName} (${customerCode})`
@@ -253,166 +383,121 @@ const handleCustomerChange = (selectedOption) => {
       setNewCustomerMode(false);
       setMessage(`✅ Customer added successfully! Code: ${customerCode}`);
       setErrors({});
+      setFormChanged(prev => !prev);
     } catch (err) {
       setMessage("❌ Failed to add customer.");
     }
   };
 
-  // Calculate totals using system settings - FIXED VERSION
-  useEffect(() => {
-    if (settingsLoading || !systemSettings) return;
+  // Handle order submit
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
-    const totalSR = Number(form.totalSR || 0);
-    const depositEGP = Number(form.depositEGP || 0);
-    const discountSR = Number(form.discountSR || 0);
-    const extraSR = Number(form.extraSR || 0);
-
-    // Calculate net SR after discount deduction
-    const netSR = totalSR - discountSR;
-
-    let baseEGP = 0;
-    const threshold = systemSettings.wholesaleThreshold || 1500;
-
-    if (form.clientType === "Wholesale") {
-      if (form.orderType === "B") {
-        baseEGP = totalSR > threshold 
-          ? (netSR * (systemSettings.barryWholesaleAbove1500 || 12.25))
-          : netSR * (systemSettings.barryWholesaleBelow1500 || 12.5);
-      } else if (form.orderType === "G") {
-        baseEGP = totalSR > threshold
-          ? netSR * (systemSettings.gawyWholesaleAbove1500 || 13.5)
-          : netSR * (systemSettings.gawyWholesaleBelow1500 || 14);
-      }
-    } else if (form.clientType === "Retail") {
-      baseEGP = form.orderType === "B" 
-        ? netSR * (systemSettings.barryRetail || 14.5)
-        : netSR * (systemSettings.gawyRetail || 15.5);
+    if (!validateMandatoryFields()) {
+      setMessage("⚠️ Please fill all required fields");
+      return;
     }
 
-    // Calculate extraEGP (extraSR * 2)
-    const extraEGP = extraSR * 2;
+    try {
+      const prefilledData = sessionStorage.getItem('prefilledOrderData');
+      const existingOrderData = prefilledData ? JSON.parse(prefilledData) : null;
+      const existingOrderId = existingOrderData?.existingOrderId;
 
-    // Calculate total order EGP (base EGP + extra EGP)
-    const totalOrderEGP = baseEGP + extraEGP;
-    const outstandingEGP = totalOrderEGP - depositEGP;
+      // Find customer to get customerCode
+      const selectedCustomerData = customers.find(c => c.id === form.customerId);
+      const customerCode = selectedCustomerData?.customerCode || "";
 
-    setTotals({ 
-      baseEGP, 
-      extraEGP, 
-      totalOrderEGP, 
-      outstandingEGP 
-    });
-  }, [
-    form.totalSR, 
-    form.depositEGP, 
-    form.discountSR, 
-    form.extraSR,
-    form.clientType, 
-    form.orderType,
-    systemSettings, 
-    settingsLoading
-  ]);
-
- // Handle order submit
-const handleSubmit = async (e) => {
-  e.preventDefault();
-
-  if (!validateMandatoryFields()) {
-    setMessage("⚠️ Please fill all required fields");
-    return;
-  }
-
-  try {
-    const prefilledData = sessionStorage.getItem('prefilledOrderData');
-    const existingOrderData = prefilledData ? JSON.parse(prefilledData) : null;
-    const existingOrderId = existingOrderData?.existingOrderId;
-
-    // Find customer to get customerCode
-    const selectedCustomerData = customers.find(c => c.id === form.customerId);
-    const customerCode = selectedCustomerData?.customerCode || "";
-
-    let orderId;
-    let firestoreOrderId;
-    let orderDocRef;
-
-    if (existingOrderId && existingOrderId !== "NEW_ORDER") {
-      firestoreOrderId = existingOrderId;
-      const orderRef = doc(db, "orders", firestoreOrderId);
-      const existingOrderSnap = await getDoc(orderRef);
-      if (existingOrderSnap.exists()) {
-        const existingOrderData = existingOrderSnap.data();
-        orderId = existingOrderData.orderId;
-      } else {
-        throw new Error("Existing order not found");
-      }
-      
-      await updateDoc(orderRef, {
+      // Convert all inputs to whole numbers for storage
+      const formDataForStorage = {
         ...form,
-        customerCode: customerCode, // Add customerCode
-        status: "Requested",
-        totalEGP: totals.totalOrderEGP,
-        outstanding: totals.outstandingEGP,
-        discountSR: Number(form.discountSR || 0),
-        extraSR: Number(form.extraSR || 0),
-        extraEGP: totals.extraEGP,
-        updatedAt: serverTimestamp(),
-      });
-
-      orderDocRef = orderRef;
-    } else {
-      orderId = await generateOrderId(form.orderType);
-      firestoreOrderId = null;
-
-      const newOrder = {
-        ...form,
-        customerCode: customerCode, // Add customerCode
-        orderId,
-        createdAt: serverTimestamp(),
-        status: "Requested",
-        totalEGP: totals.totalOrderEGP,
-        outstanding: totals.outstandingEGP,
-        discountSR: Number(form.discountSR || 0),
-        extraSR: Number(form.extraSR || 0),
-        extraEGP: totals.extraEGP,
-        uploadId: sessionStorage.getItem('uploadId') || null,
+        totalSR: toWholeNumber(form.totalSR),
+        depositEGP: toWholeNumber(form.depositEGP),
+        discountEGP: toWholeNumber(form.discountEGP),
+        pieces: toWholeNumber(form.pieces),
+        extraSR: toWholeNumber(form.extraSR),
+        customerCode,
       };
 
-      orderDocRef = await addDoc(collection(db, "orders"), newOrder);
-      firestoreOrderId = orderDocRef.id;
+      let orderId;
+      let firestoreOrderId;
+      let orderDocRef;
+
+      if (existingOrderId && existingOrderId !== "NEW_ORDER") {
+        firestoreOrderId = existingOrderId;
+        const orderRef = doc(db, "orders", firestoreOrderId);
+        const existingOrderSnap = await getDoc(orderRef);
+        if (existingOrderSnap.exists()) {
+          const existingOrderData = existingOrderSnap.data();
+          orderId = existingOrderData.orderId;
+        } else {
+          throw new Error("Existing order not found");
+        }
+        
+        await updateDoc(orderRef, {
+          ...formDataForStorage,
+          status: "Requested",
+          totalEGP: totals.totalOrderEGP,
+          outstanding: totals.outstandingEGP,
+          extraEGP: totals.extraEGP,
+          updatedAt: serverTimestamp(),
+        });
+
+        orderDocRef = orderRef;
+      } else {
+        orderId = await generateOrderId(form.orderType);
+        firestoreOrderId = null;
+
+        const newOrder = {
+          ...formDataForStorage,
+          orderId,
+          createdAt: serverTimestamp(),
+          status: "Requested",
+          totalEGP: totals.totalOrderEGP,
+          outstanding: totals.outstandingEGP,
+          extraEGP: totals.extraEGP,
+          uploadId: sessionStorage.getItem('uploadId') || null,
+        };
+
+        orderDocRef = await addDoc(collection(db, "orders"), newOrder);
+        firestoreOrderId = orderDocRef.id;
+      }
+
+      if (sessionStorage.getItem('uploadId')) {
+        sessionStorage.removeItem('prefilledOrderData');
+        sessionStorage.removeItem('uploadId');
+      }
+
+      setMessage(`✅ Order ${existingOrderId ? 'updated' : 'added'} successfully! Order ID: ${orderId} (Status: Requested)`);
+
+      // Reset form
+      setForm({
+        customerId: "",
+        customerName: "",
+        phone: "",
+        clientType: "",
+        totalSR: "",
+        depositEGP: "",
+        orderType: "B",
+        discountEGP: "",
+        pieces: "",
+        extraSR: "",
+        customerCode: "",
+      });
+      setSelectedCustomer(null);
+      setTotals({ 
+        totalOrderEGP: 0, 
+        outstandingEGP: 0,
+        extraEGP: 0,
+        baseEGP: 0,
+        conversionRate: 0
+      });
+      setErrors({});
+      setFormChanged(prev => !prev);
+    } catch (err) {
+      setMessage("❌ Error " + (existingOrderId ? 'updating' : 'adding') + " order: " + err.message);
     }
+  };
 
-    if (sessionStorage.getItem('uploadId')) {
-      sessionStorage.removeItem('prefilledOrderData');
-      sessionStorage.removeItem('uploadId');
-    }
-
-    setMessage(`✅ Order ${existingOrderId ? 'updated' : 'added'} successfully! Order ID: ${orderId} (Status: Requested)`);
-
-    setForm({
-      customerId: "",
-      customerName: "",
-      phone: "",
-      clientType: "",
-      totalSR: "",
-      depositEGP: "",
-      orderType: "B",
-      discountSR: "",
-      pieces: "",
-      extraSR: "",
-      customerCode: "",
-    });
-    setSelectedCustomer(null);
-    setTotals({ 
-      totalOrderEGP: 0, 
-      outstandingEGP: 0,
-      extraEGP: 0,
-      baseEGP: 0 
-    });
-    setErrors({});
-  } catch (err) {
-    setMessage("❌ Error " + (existingOrderId ? 'updating' : 'adding') + " order: " + err.message);
-  }
-};
   const customStyles = {
     control: (base, state) => ({
       ...base,
@@ -473,7 +558,7 @@ const handleSubmit = async (e) => {
               <Input
                 label="Customer Name"
                 value={form.customerName}
-                onChange={(e) => setForm({ ...form, customerName: e.target.value })}
+                onChange={(e) => handleFormChange("customerName", e.target.value)}
                 className={errors.customerName ? "border-red-500" : ""}
               />
               {errors.customerName && <p className="text-red-500 text-sm mt-1">{errors.customerName}</p>}
@@ -482,7 +567,7 @@ const handleSubmit = async (e) => {
               <Input
                 label="Phone Number"
                 value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                onChange={(e) => handleFormChange("phone", e.target.value)}
                 className={errors.phone ? "border-red-500" : ""}
               />
               {errors.phone && <p className="text-red-500 text-sm mt-1">{errors.phone}</p>}
@@ -491,7 +576,7 @@ const handleSubmit = async (e) => {
               <label className="block text-gray-700 font-medium mb-1">Customer Type</label>
               <select
                 value={form.clientType}
-                onChange={(e) => setForm({ ...form, clientType: e.target.value })}
+                onChange={(e) => handleFormChange("clientType", e.target.value)}
                 className={`border border-gray-300 rounded-lg p-2 w-full focus:ring focus:ring-blue-200 ${errors.clientType ? "border-red-500" : ""}`}
               >
                 <option value="">Select Type</option>
@@ -511,10 +596,10 @@ const handleSubmit = async (e) => {
       {/* Order Details */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
         <div>
-          <label className="block text-gray-700 font-medium mb-2">Order Type</label>
+          <label className="block text-gray-700 mb-2">Order Type</label>
           <select
             value={form.orderType}
-            onChange={(e) => setForm({ ...form, orderType: e.target.value })}
+            onChange={(e) => handleFormChange("orderType", e.target.value)}
             className="border border-gray-300 rounded-lg p-2 w-full focus:ring focus:ring-blue-200"
           >
             {systemSettings.orderTypes?.map((type) => (
@@ -528,76 +613,100 @@ const handleSubmit = async (e) => {
           <Input
             label={
               <>
-                Total (SR) <span className="text-red-500">*</span>
+                Pieces <span className="text-red-500">*</span>
               </>
             }
-            type="number"
-            value={form.totalSR}
-            onChange={(e) => {
-              setForm({ ...form, totalSR: e.target.value });
-              if (errors.totalSR) {
-                setErrors(prev => ({ ...prev, totalSR: "" }));
-              }
-            }}
-            className={errors.totalSR ? "border-red-500" : ""}
+            type="text"
+            inputMode="decimal"
+            value={form.pieces}
+            onChange={(e) => handleFormChange("pieces", e.target.value)}
+            className={errors.pieces ? "border-red-500" : ""}
+            placeholder="Whole numbers only"
           />
-          {errors.totalSR && <p className="text-red-500 text-sm mt-1">{errors.totalSR}</p>}
+          {errors.pieces && <p className="text-red-500 text-sm mt-1">{errors.pieces}</p>}
         </div>
-        <Input label="Deposit (EGP)" type="number" value={form.depositEGP} onChange={(e) => setForm({ ...form, depositEGP: e.target.value })} />
         <div>
           <Input
             label={
               <>
-                Pieces <span className="text-red-500">*</span>
+                Total (SR) <span className="text-red-500">*</span>
               </>
             }
-            type="number"
-            value={form.pieces}
-            onChange={(e) => {
-              setForm({ ...form, pieces: e.target.value });
-              if (errors.pieces) {
-                setErrors(prev => ({ ...prev, pieces: "" }));
-              }
-            }}
-            className={errors.pieces ? "border-red-500" : ""}
+            type="text"
+            inputMode="decimal"
+            value={form.totalSR}
+            onChange={(e) => handleFormChange("totalSR", e.target.value)}
+            className={errors.totalSR ? "border-red-500" : ""}
+            placeholder="Enter SR amount"
           />
-          {errors.pieces && <p className="text-red-500 text-sm mt-1">{errors.pieces}</p>}
+          {errors.totalSR && <p className="text-red-500 text-sm mt-1">{errors.totalSR}</p>}
+        </div>
+        <Input 
+          label="Extra (SR)" 
+          type="text"
+          inputMode="decimal"
+          value={form.extraSR} 
+          onChange={(e) => handleFormChange("extraSR", e.target.value)} 
+          placeholder="Extra SR amount"
+        />
+      </div>
+
+      {/* Deposit and Discount */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
+        <Input 
+          label="Deposit (EGP)" 
+          type="text"
+          inputMode="decimal"
+          value={form.depositEGP} 
+          onChange={(e) => handleFormChange("depositEGP", e.target.value)} 
+          placeholder="Whole numbers only"
+        />
+        
+        <div>
+          <Input 
+            label="Discount (EGP)" 
+            type="text"
+            inputMode="decimal"
+            value={form.discountEGP} 
+            onChange={(e) => handleFormChange("discountEGP", e.target.value)} 
+            placeholder="Use minus for discount"
+          />
         </div>
       </div>
 
-      {/* Discount & Extra SR */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
-        <Input 
-          label="Discount (SR)" 
-          type="number" 
-          value={form.discountSR} 
-          onChange={(e) => setForm({ ...form, discountSR: e.target.value })} 
-        />
-        <Input 
-          label="Extra (SR)" 
-          type="number" 
-          value={form.extraSR} 
-          onChange={(e) => setForm({ ...form, extraSR: e.target.value })} 
-        />
-        <div className="sm:col-span-2"></div>
-      </div>
-
-      {/* Totals */}
+      {/* Totals - UPDATED WITH ROUNDING INFO */}
       <div className="mb-4 text-gray-700 bg-gray-50 p-4 rounded-lg">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
-            <p className="font-medium">Base Order (EGP): <span className="text-blue-600">{totals.baseEGP.toFixed(2)}</span></p>
-            <p className="text-sm text-gray-500">(Total SR - Discount SR) × Conversion Rate</p>
+            <p className="font-medium">Conversion Rate: <span className="text-blue-600">{totals.conversionRate.toFixed(2)}</span></p>
           </div>
           <div>
-            <p className="font-medium">Extra (EGP): <span className="text-green-600">{totals.extraEGP.toFixed(2)}</span></p>
+            <p className="font-medium">Extra (EGP): <span className="text-green-600">{totals.extraEGP.toLocaleString()}</span></p>
             <p className="text-sm text-gray-500">(Extra SR × 2)</p>
           </div>
         </div>
         <div className="mt-3 pt-3 border-t border-gray-200">
-          <p className="font-semibold text-lg">Total Order (EGP): <span className="text-blue-700">{totals.totalOrderEGP.toFixed(2)}</span></p>
-          <p className="font-medium">Outstanding Amount (EGP): <span className={totals.outstandingEGP > 0 ? "text-red-600" : "text-green-600"}>{totals.outstandingEGP.toFixed(2)}</span></p>
+          <p className="font-semibold text-lg">Total Order (EGP): <span className="text-blue-700">{totals.totalOrderEGP.toLocaleString()}</span></p>
+          <p className="text-sm text-gray-500 mb-2">
+            {(form.totalSR * totals.conversionRate) + totals.extraEGP - totals.discountEGP}
+            {form.clientType === "Retail" && " (rounded to nearest multiple of 5)"}
+          </p>
+          <p className="font-medium">Outstanding Amount (EGP): <span className={totals.outstandingEGP > 0 ? "text-red-600" : "text-green-600"}>{totals.outstandingEGP.toLocaleString()}</span></p>
+          <p className="text-sm text-gray-500">
+            (Total Order EGP - Deposit EGP)
+            {form.clientType === "Retail" && " (rounded to nearest multiple of 5)"}
+          </p>
         </div>
+        {form.clientType === "Retail" && (
+          <div className="mt-3 pt-3 border-t border-gray-200 bg-yellow-50 p-3 rounded">
+            <p className="text-sm text-yellow-700 font-medium">
+              ⓘ Retail customers: All EGP amounts are rounded to the nearest multiple of 5
+            </p>
+            <p className="text-sm text-yellow-600 mt-1">
+              Example: 83 → 85, 197 → 195, 198 → 200
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Submit */}

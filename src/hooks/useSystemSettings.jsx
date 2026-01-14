@@ -37,14 +37,15 @@ const defaultSettings = {
   
   // WhatsApp Messages - UPDATED WITH NEW TEMPLATES
   // For Wholesale (Gomla) users
-  orderPlacedMessageWholesale: `عدد القطع ({pieces})
+  orderPlacedMessageWholesale: `اهلا {customerName} ({customerCode})
+  عدد القطع ({pieces})
 قيمة الطلب بالريال {totalSR}
 بدون كود {extraSR}
 قيمة الطلب بالمصرى {totalEGP}
 الاجمالى المصرى {totalEGPPlusExtra}
 العربون {deposit}
 المتبقى من الطلب {outstanding}
-بعد دفع العربون، يرجى إرفاق لقطة شاشة للمعاملة وعناصر الطلب عبر الرابط التالي للتأكيد: http://localhost:5173/upload`,
+بعد دفع العربون، يرجى إرفاق لقطة شاشة للمعاملة وعناصر الطلب عبر الرابط التالي للتأكيد: https://orders-tracking-system.vercel.app/upload`,
 
   // For Retail with no deposit
   orderPlacedMessageRetailNoDeposit: `Hi {customerName} ({customerCode})
@@ -78,7 +79,7 @@ Youlawilliam
 Youlawilliam137
 
 A 50% deposit is required to complete the ordering process.
-After deposit payment, kindly attach transaction screenshot and order items to the following link for confirmation: http://localhost:5173/upload
+After deposit payment, kindly attach transaction screenshot and order items to the following link for confirmation: https://orders-tracking-system.vercel.app/upload
 
 Thank you for purchasing from us.
 Youla's Yard.`,
@@ -86,7 +87,7 @@ Youla's Yard.`,
   // Keep existing messages for backward compatibility
   orderPlacedMessage: "📦 Hello {customerName} ({customerCode}), your order ({orderId}) has been *placed* successfully! ✅",
   paymentRejectedMessage: "Order not placed as attached deposit photo is inconsistent with the entered payment amount.\n\nKindly re-upload the right deposit amount on the same link",
-  inDistributionMessage: "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: http://localhost:5173/upload",
+  inDistributionMessage: "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: https://orders-tracking-system.vercel.app/upload",
   
   // Thresholds
   wholesaleThreshold: 1500,

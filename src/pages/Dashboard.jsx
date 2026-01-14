@@ -93,87 +93,6 @@ const Toast = ({ message, type = "info", onClose, duration = 5000 }) => {
   );
 };
 
-
-// TrackingNumbersInput Component
-const TrackingNumbersInput = ({ order, onUpdate }) => {
-  const [localTrackingNumbers, setLocalTrackingNumbers] = useState(
-    order.trackingNumbers && order.trackingNumbers.length > 0 
-      ? [...order.trackingNumbers] 
-      : [""]
-  );
-
-  // Update local state when order changes
-  useEffect(() => {
-    setLocalTrackingNumbers(
-      order.trackingNumbers && order.trackingNumbers.length > 0 
-        ? [...order.trackingNumbers] 
-        : [""]
-    );
-  }, [order.trackingNumbers]);
-
-  const handleTrackingChange = (index, value) => {
-    const newTrackingNumbers = [...localTrackingNumbers];
-    newTrackingNumbers[index] = value;
-    setLocalTrackingNumbers(newTrackingNumbers);
-  };
-
-  const handleTrackingBlur = () => {
-    // Filter out empty strings before saving
-    const filteredNumbers = localTrackingNumbers.filter(num => num.trim() !== "");
-    onUpdate(order.id, filteredNumbers);
-  };
-
-  const addTrackingNumberField = () => {
-    const newTrackingNumbers = [...localTrackingNumbers, ""];
-    setLocalTrackingNumbers(newTrackingNumbers);
-  };
-
-  const removeTrackingNumberField = (index) => {
-    if (localTrackingNumbers.length <= 1) return;
-    const newTrackingNumbers = [...localTrackingNumbers];
-    newTrackingNumbers.splice(index, 1);
-    setLocalTrackingNumbers(newTrackingNumbers);
-    // Save immediately when removing
-    const filteredNumbers = newTrackingNumbers.filter(num => num.trim() !== "");
-    onUpdate(order.id, filteredNumbers);
-  };
-
-  return (
-    <div className="space-y-2">
-      {localTrackingNumbers.map((num, idx) => (
-        <div key={idx} className="flex items-center gap-2">
-          <input
-            type="text"
-            value={num}
-            onChange={(e) => handleTrackingChange(idx, e.target.value)}
-            onBlur={handleTrackingBlur}
-            className="flex-1 px-2 py-1 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
-            placeholder={`Tracking #${idx + 1}`}
-          />
-          {localTrackingNumbers.length > 1 && (
-            <button
-              type="button"
-              onClick={() => removeTrackingNumberField(idx)}
-              className="text-red-500 hover:text-red-700 p-1"
-              title="Remove tracking number"
-            >
-              <FiMinus size={14} />
-            </button>
-          )}
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={addTrackingNumberField}
-        className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1"
-      >
-        <FiPlus size={14} />
-        Add Another Tracking Number
-      </button>
-    </div>
-  );
-};
-
 // Function to generate consistent color based on sheet ID
 const getSheetColor = (sheetId) => {
   if (!sheetId) return null;
@@ -558,56 +477,61 @@ const handlePlaceOrders = async () => {
   const failedUpdates = [];
 
   // Helper function to get the appropriate WhatsApp message
-  const getWhatsAppMessage = (order) => {
-    const {
-      clientType,
-      pieces = 0,
-      totalSR = 0,
-      extraSR = 0,
-      totalEGP = 0,
-      depositEGP = 0, // This should already exist
-      outstanding = 0, // This should already exist
-      customerName,
-      customerCode,
-      orderId
-    } = order;
+const getWhatsAppMessage = (order) => {
+  const {
+    clientType,
+    pieces = 0,
+    totalSR = 0,
+    extraSR = 0,
+    totalEGP = 0,
+    depositEGP = 0,
+    outstanding = 0,
+    customerName = '',
+    customerCode = '',
+    orderId
+  } = order;
 
-    // Calculate totalEGPPlusExtra for wholesale messages
-    const totalEGPPlusExtra = (Number(totalEGP) || 0) + (Number(extraSR) || 0);
+  const isRetail = clientType === "Retail";
+  
+  // Format all numbers properly
+  const formattedPieces = Math.round(parseFloat(pieces) || 0);
+  const formattedTotalSR = Math.round(parseFloat(totalSR) || 0);
+  const formattedExtraSR = Math.round(parseFloat(extraSR) || 0);
+  const formattedTotalEGP = isRetail ? 
+    Math.round((parseFloat(totalEGP) || 0) / 5) * 5 : 
+    Math.round(parseFloat(totalEGP) || 0);
+  const formattedDeposit = isRetail ? 
+    Math.round((parseFloat(depositEGP) || 0) / 5) * 5 : 
+    Math.round(parseFloat(depositEGP) || 0);
+  const formattedOutstanding = isRetail ? 
+    Math.round((parseFloat(outstanding) || 0) / 5) * 5 : 
+    Math.round(parseFloat(outstanding) || 0);
+  
+  // Calculate totalEGPPlusExtra with proper rounding
+  const totalEGPPlusExtra = formattedTotalEGP + formattedExtraSR;
+  
+  if (clientType === "Wholesale") {
+    return `اهلا ${customerName || 'العميل'} (${customerCode || ''})
+عدد القطع (${formattedPieces})
+قيمة الطلب بالريال ${formattedTotalSR}
+بدون كود ${formattedExtraSR}
+قيمة الطلب بالمصرى ${formattedTotalEGP}
+الاجمالى المصرى ${totalEGPPlusExtra}
+العربون ${formattedDeposit}
+المتبقى من الطلب ${formattedOutstanding}
+بعد دفع العربون، يرجى إرفاق لقطة شاشة للمعاملة وعناصر الطلب عبر الرابط التالي للتأكيد: 
+https://orders-tracking-system.vercel.app/upload`;
     
-    if (clientType === "Wholesale") {
-      // Use wholesale message template
-      const template = settings?.orderPlacedMessageWholesale || 
-        `عدد القطع ({pieces})
-قيمة الطلب بالريال {totalSR}
-بدون كود {extraSR}
-قيمة الطلب بالمصرى {totalEGP}
-الاجمالى المصرى {totalEGPPlusExtra}
-العربون {deposit}
-المتبقى من الطلب {outstanding}
-بعد دفع العربون، يرجى إرفاق لقطة شاشة للمعاملة وعناصر الطلب عبر الرابط التالي للتأكيد: http://localhost:5173/upload`;
-      
-      return template
-        .replace('{pieces}', pieces || '0')
-        .replace('{totalSR}', totalSR || '0')
-        .replace('{extraSR}', extraSR || '0')
-        .replace('{totalEGP}', totalEGP || '0')
-        .replace('{totalEGPPlusExtra}', totalEGPPlusExtra.toString())
-        .replace('{deposit}', depositEGP || '0')
-        .replace('{outstanding}', outstanding || '0');
-        
-    } else if (clientType === "Retail") {
-      const depositAmount = Number(depositEGP) || 0;
-      
-      if (depositAmount > 0) {
-        // Retail with deposit
-        const template = settings?.orderPlacedMessageRetailWithDeposit || 
-          `Hi {customerName} ({customerCode})
+  } else if (clientType === "Retail") {
+    const depositAmount = formattedDeposit;
+    
+    if (depositAmount > 0) {
+      return `Hi ${customerName || ''} (${customerCode || ''})
 This is a confirmation message from us to make sure that every detail about your order is exactly as you wanted.
-no of items: {pieces}
-total: {totalEGP}
-paid deposit: {deposit}
-outstanding: {outstanding}
+no of items: ${formattedPieces}
+total: ${formattedTotalEGP}
+paid deposit: ${formattedDeposit}
+outstanding: ${formattedOutstanding}
 
 And the photo below is the one you requested.
 
@@ -618,25 +542,15 @@ Youlawilliam
 Youlawilliam137
 
 A 50% deposit is required to complete the ordering process.
-After deposit payment, kindly attach transaction screenshot and order items to the following link for confirmation: http://localhost:5173/upload
+After deposit payment, kindly attach transaction screenshot and order items to the following link for confirmation: https://orders-tracking-system.vercel.app/upload
 
 Thank you for purchasing from us.
 Youla's Yard.`;
-        
-        return template
-          .replace('{customerName}', customerName || '')
-          .replace('{customerCode}', customerCode || '')
-          .replace('{pieces}', pieces || '0')
-          .replace('{totalEGP}', totalEGP || '0')
-          .replace('{deposit}', depositEGP || '0')
-          .replace('{outstanding}', outstanding || '0');
-      } else {
-        // Retail without deposit - VIP clients
-        const template = settings?.orderPlacedMessageRetailNoDeposit || 
-          `Hi {customerName} ({customerCode})
+    } else {
+      return `Hi ${customerName || ''} (${customerCode || ''})
 This is a confirmation message from us to make sure that every detail about your order is exactly as you wanted.
-no of items: {pieces}
-total: {totalEGP}
+no of items: ${formattedPieces}
+total: ${formattedTotalEGP}
 
 And the photo below is the one you requested.
 
@@ -646,25 +560,12 @@ You are marked as a VIP client on our list..no deposit is needed.
 
 Thank you for purchasing from us.
 Youla's Yard.`;
-        
-        return template
-          .replace('{customerName}', customerName || '')
-          .replace('{customerCode}', customerCode || '')
-          .replace('{pieces}', pieces || '0')
-          .replace('{totalEGP}', totalEGP || '0');
-      }
-    } else {
-      // Fallback to legacy message for other client types or if clientType is not specified
-      const template = settings?.orderPlacedMessage || 
-        "📦 Hello {customerName} ({customerCode}), your order ({orderId}) has been *placed* successfully! ✅";
-      
-      return template
-        .replace('{customerName}', customerName || '')
-        .replace('{customerCode}', customerCode || '')
-        .replace('{orderId}', orderId || '');
     }
-  };
-
+  } else {
+    // Fallback for unknown client types
+    return `📦 Hello ${customerName || ''} (${customerCode || ''}), your order (${orderId || ''}) has been *placed* successfully! ✅`;
+  }
+};
   for (const id of selectedOrders) {
     try {
       const order = orders.find((o) => o.id === id);
@@ -699,7 +600,7 @@ Youla's Yard.`;
       if (cleanPhone) {
         const message = getWhatsAppMessage(order);
         const encodedMessage = encodeURIComponent(message);
-        window.open(`https://wa.me/${cleanPhone}?text=${encodedMessage}`, "_blank");
+        window.open(`https://wa.me/2${cleanPhone}?text=${encodedMessage}`, "_blank");
       }
 
       successfulUpdates.push({
@@ -745,45 +646,6 @@ Youla's Yard.`;
 };
 
 
-  const getWhatsAppMessage = (order, settings) => {
-  const { clientType, pieces, totalSR, extraSR, totalEGP, deposit, outstanding } = order;
-  
-  if (clientType === "Wholesale") {
-    const totalEGPPlusExtra = (Number(totalEGP) || 0) + (Number(extraSR) || 0);
-    return settings.orderPlacedMessageWholesale
-      .replace('{pieces}', pieces || '0')
-      .replace('{totalSR}', totalSR || '0')
-      .replace('{extraSR}', extraSR || '0')
-      .replace('{totalEGP}', totalEGP || '0')
-      .replace('{totalEGPPlusExtra}', totalEGPPlusExtra.toString())
-      .replace('{deposit}', deposit || '0')
-      .replace('{outstanding}', outstanding || '0');
-  } else if (clientType === "Retail") {
-    if (Number(deposit) > 0) {
-      // Retail with deposit
-      return settings.orderPlacedMessageRetailWithDeposit
-        .replace('{customerName}', order.customerName || '')
-        .replace('{customerCode}', order.customerCode || '')
-        .replace('{pieces}', pieces || '0')
-        .replace('{totalEGP}', totalEGP || '0')
-        .replace('{deposit}', deposit || '0')
-        .replace('{outstanding}', outstanding || '0');
-    } else {
-      // Retail without deposit
-      return settings.orderPlacedMessageRetailNoDeposit
-        .replace('{customerName}', order.customerName || '')
-        .replace('{customerCode}', order.customerCode || '')
-        .replace('{pieces}', pieces || '0')
-        .replace('{totalEGP}', totalEGP || '0');
-    }
-  } else {
-    // Fallback to legacy message
-    return settings.orderPlacedMessage
-      .replace('{customerName}', order.customerName || '')
-      .replace('{customerCode}', order.customerCode || '')
-      .replace('{orderId}', order.orderId || '');
-  }
-};
 // Bulk Status Update Modal Component
 const BulkStatusUpdateModal = ({ isOpen, onClose, onConfirm, selectedCount }) => {
   const { settings } = useSystemSettings();
@@ -967,175 +829,14 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
     return pieces;
   };  
 
-  // Save merged group to Firestore
-  const saveMergedGroupToFirestore = async (group) => {
-    try {
-      const groupRef = doc(db, "mergedGroups", group.id);
-      await setDoc(groupRef, {
-        orders: group.orders,
-        trackingNumber: group.trackingNumber,
-        totalPieces: group.totalPieces,
-        createdAt: new Date(),
-        orderIds: group.orders.map(orderId => {
-          const order = orders.find(o => o.id === orderId);
-          return order ? order.orderId : orderId;
-        })
-      });
-    } catch (error) {
-      throw error;
-    }
+  const formatNumber = (num) => {
+    const number = Number(num);
+    if (isNaN(number)) return "0";
+    return number.toLocaleString();
   };
 
-  // Delete merged group from Firestore
-  const deleteMergedGroupFromFirestore = async (groupId) => {
-    try {
-      const groupRef = doc(db, "mergedGroups", groupId);
-      await deleteDoc(groupRef);
-    } catch (error) {
-      throw error;
-    }
-  };
-
-  // Handle merging cells - PREVENT CROSS-TABLE MERGING
-  // const handleMergeCells = async (orderIds, trackingNumber = "") => {
-  //   if (orderIds.length <= 1) return;
-    
-  //   // Check if orders are from the same table
-  //   if (!areOrdersFromSameTable(orderIds)) {
-  //     showToast("❌ Cannot merge orders from different tables (Barry and Gawy). Please select orders from the same table only.", "error");
-  //     return;
-  //   }
-    
-  //   setMergeLoading(true);
-  //   setMergeSuccess(false);
-    
-  //   try {
-  //     // Sort orders by sheet or orderId
-  //     const sortedOrderIds = [...orderIds].sort((a, b) => {
-  //       const orderA = orders.find(o => o.id === a);
-  //       const orderB = orders.find(o => o.id === b);
-  //       return sortOrdersBySheet([orderA, orderB]).map(o => o.id).indexOf(orderA.id);
-  //     });
-
-  //     const totalPieces = sortedOrderIds.reduce((sum, id) => {
-  //       const order = orders.find(o => o.id === id);
-  //       const pieces = Number(order?.pieces) || 0;
-  //       return sum + pieces;
-  //     }, 0);
-      
-  //     const newGroup = {
-  //       id: `merge-${Date.now()}`,
-  //       orders: sortedOrderIds,
-  //       trackingNumber: trackingNumber || generateTrackingNumber(),
-  //       totalPieces: totalPieces,
-  //     };
-      
-  //     // Save to Firestore first
-  //     await saveMergedGroupToFirestore(newGroup);
-      
-  //     // Then update local state
-  //     setMergedGroups(prev => [...prev, newGroup]);
-      
-  //     // Update orders with merged group info
-  //     const updatedOrders = orders.map(order => {
-  //       if (sortedOrderIds.includes(order.id)) {
-  //         return {
-  //           ...order,
-  //           mergedGroupId: newGroup.id,
-  //           isMerged: true
-  //         };
-  //       }
-  //       return order;
-  //     });
-  //     setOrders(updatedOrders);
-      
-  //     // Show success feedback
-  //     setMergeSuccess(true);
-  //     showToast(`✅ Successfully merged ${orderIds.length} orders!`, "success");
-  //     setTimeout(() => setMergeSuccess(false), 3000);
-      
-  //     return newGroup.id;
-  //   } catch (error) {
-  //     showToast("❌ Failed to save merged group. Please try again.", "error");
-  //     return null;
-  //   } finally {
-  //     setMergeLoading(false);
-  //   }
-  // };
-
-  // // Handle unmerging cells
-  // const handleUnmergeCells = async (groupId) => {
-  //   try {
-  //     // Delete from Firestore first
-  //     await deleteMergedGroupFromFirestore(groupId);
-      
-  //     // Then update local state
-  //     setMergedGroups(prev => prev.filter(group => group.id !== groupId));
-      
-  //     // Update orders to remove merged group info
-  //     const updatedOrders = orders.map(order => {
-  //       if (order.mergedGroupId === groupId) {
-  //         const { mergedGroupId, isMerged, ...rest } = order;
-  //         return rest;
-  //       }
-  //       return order;
-  //     });
-  //     setOrders(updatedOrders);
-      
-  //     showToast("✅ Orders unmerged successfully!", "success");
-  //   } catch (error) {
-  //     showToast("❌ Failed to unmerge group. Please try again.", "error");
-  //   }
-  // };
-
-  // // Check if an order is part of a merged group
-  // const getOrderMergeInfo = (orderId) => {
-  //   for (const group of mergedGroups) {
-  //     if (group.orders.includes(orderId)) {
-  //       const isFirstInGroup = group.orders[0] === orderId;
-  //       return {
-  //         isMerged: true,
-  //         groupId: group.id,
-  //         isFirstInGroup,
-  //         rowSpan: group.orders.length,
-  //         trackingNumber: group.trackingNumber,
-  //         totalPieces: group.totalPieces
-  //       };
-  //     }
-  //   }
-  //   return { isMerged: false };
-  // };
-
-  // // Update merged tracking number in Firestore
-  // const updateMergedTracking = async (groupId, trackingNumber) => {
-  //   try {
-  //     const groupRef = doc(db, "mergedGroups", groupId);
-  //     await updateDoc(groupRef, { 
-  //       trackingNumber: trackingNumber,
-  //       updatedAt: new Date()
-  //     });
-      
-  //     setMergedGroups(prev => 
-  //       prev.map(group => 
-  //         group.id === groupId 
-  //           ? { ...group, trackingNumber }
-  //           : group
-  //       )
-  //     );
-  //     showToast("Tracking number updated successfully!", "success");
-  //   } catch (error) {
-  //     showToast("❌ Failed to update tracking number. Please try again.", "error");
-  //   }
-  // };
-
-  // Auto-generate tracking number for merged orders
-  const generateTrackingNumber = () => {
-    const timestamp = new Date().getTime();
-    return `TRK${timestamp.toString().slice(-8)}`;
-  };
-
-  // NEW: Group orders by sheet for automatic merging
-  const getOrdersGroupedBySheet = (orderList) => {
+  // Get all orders with sheet-based merging
+  const getOrdersWithSheetMerging = (orderList) => {
     const sheetGroups = {};
     
     orderList.forEach(order => {
@@ -1159,18 +860,6 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
       group.orders = sortOrdersBySheet(group.orders);
     });
     
-    return sheetGroups;
-  };
-
-  const formatNumber = (num) => {
-    const number = Number(num);
-    if (isNaN(number)) return "0";
-    return number.toLocaleString();
-  };
-
-  // Get all orders with sheet-based merging
-  const getOrdersWithSheetMerging = (orderList) => {
-    const sheetGroups = getOrdersGroupedBySheet(orderList);
     const result = [];
     const processedOrderIds = new Set();
     
@@ -1272,7 +961,6 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
           pieces: Number(order.pieces) || 0,
           outstanding: order.outstanding || 0,
           phone: order.phone || '',
-          customerName: order.customerName,
           customerCode: order.customerCode || "",
         })),
         totalPieces: totalPieces,
@@ -1356,30 +1044,6 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
     showToast("Filters reset to today", "info");
   };
 
-  // Handle tracking numbers update
-  const handleTrackingNumbersUpdate = async (orderId, newTrackingNumbers) => {
-    try {
-      const filteredNumbers = newTrackingNumbers.filter(num => num.trim() !== "");
-      const orderRef = doc(db, "orders", orderId);
-      
-      await updateDoc(orderRef, { 
-        trackingNumbers: filteredNumbers,
-        lastUpdated: new Date()
-      });
-
-      // Update local state
-      setOrders(prev => prev.map(order => 
-        order.id === orderId 
-          ? { ...order, trackingNumbers: filteredNumbers }
-          : order
-      ));
-
-      showToast("Tracking numbers updated successfully!", "success");
-    } catch (error) {
-      showToast(`❌ Failed to update tracking numbers: ${error.message}`, "error");
-    }
-  };
-
  const handleUpdate = async (orderId, field, value) => {
   try {
     const orderRef = doc(db, "orders", orderId);
@@ -1411,7 +1075,7 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
         
         if (cleanPhone) {
           const messageTemplate = settings?.inDistributionMessage || 
-            "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: http://localhost:5173/upload";
+            "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: https://orders-tracking-system.vercel.app/upload";
           
           const message = encodeURIComponent(
             messageTemplate
@@ -1419,7 +1083,7 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
               .replace('{orderId}', orderToUpdate.orderId || '')
               .replace('{outstandingAmount}', orderToUpdate.outstanding?.toFixed(2) || '0.00')
           );
-          window.open(`https://wa.me/${cleanPhone}?text=${message}`, "_blank");
+          window.open(`https://wa.me/2${cleanPhone}?text=${message}`, "_blank");
         }
         
         await updateDoc(orderRef, { 
@@ -1456,16 +1120,19 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message, confirm
             // Use settings if available, otherwise use fallback templates
             if (clientType === "Wholesale") {
               const template = settings?.orderPlacedMessageWholesale || 
-                `عدد القطع ({pieces})
+              `اهلا {customerName} ({customerCode})
+              عدد القطع ({pieces})
 قيمة الطلب بالريال {totalSR}
 بدون كود {extraSR}
 قيمة الطلب بالمصرى {totalEGP}
 الاجمالى المصرى {totalEGPPlusExtra}
 العربون {deposit}
 المتبقى من الطلب {outstanding}
-بعد دفع العربون، يرجى إرفاق لقطة شاشة للمعاملة وعناصر الطلب عبر الرابط التالي للتأكيد: http://localhost:5173/upload`;
+بعد دفع العربون، يرجى إرفاق لقطة شاشة للمعاملة وعناصر الطلب عبر الرابط التالي للتأكيد: https://orders-tracking-system.vercel.app/upload`;
               
               return template
+               .replace('{customerName}', customerName || '')
+                  .replace('{customerCode}', customerCode || '')
                 .replace('{pieces}', pieces || '0')
                 .replace('{totalSR}', totalSR || '0')
                 .replace('{extraSR}', extraSR || '0')
@@ -1495,7 +1162,7 @@ Youlawilliam
 Youlawilliam137
 
 A 50% deposit is required to complete the ordering process.
-After deposit payment, kindly attach transaction screenshot and order items to the following link for confirmation: http://localhost:5173/upload
+After deposit payment, kindly attach transaction screenshot and order items to the following link for confirmation: https://orders-tracking-system.vercel.app/upload
 
 Thank you for purchasing from us.
 Youla's Yard.`;
@@ -1542,7 +1209,7 @@ Youla's Yard.`;
           
           const message = getMessageForSingleOrder(orderToUpdate);
           const encodedMessage = encodeURIComponent(message);
-          window.open(`https://wa.me/${cleanPhone}?text=${encodedMessage}`, "_blank");
+          window.open(`https://wa.me/2${cleanPhone}?text=${encodedMessage}`, "_blank");
         }
         await updateDoc(orderRef, { 
         [field]: updatedOrder[field],
@@ -1623,7 +1290,7 @@ Youla's Yard.`;
           
           if (cleanPhone) {
             const messageTemplate = settings?.inDistributionMessage || 
-              "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: http://localhost:5173/upload";
+              "Your order ({orderId}) has arrived. It will be delivered to you in 1-3 days. Kindly transfer the outstanding amount ({outstandingAmount} EGP) and upload the receipt screenshot on the following link: https://orders-tracking-system.vercel.app/upload";
             
             const message = encodeURIComponent(
               messageTemplate
@@ -1631,7 +1298,7 @@ Youla's Yard.`;
                 .replace('{orderId}', order.orderId || '')
                 .replace('{outstandingAmount}', order.outstanding?.toFixed(2) || '0.00')
             );
-            window.open(`https://wa.me/${cleanPhone}?text=${message}`, "_blank");
+            window.open(`https://wa.me/2${cleanPhone}?text=${message}`, "_blank");
           }
           
           await updateDoc(orderRef, { 
@@ -1867,111 +1534,7 @@ Youla's Yard.`;
     setBulkStatusModal({ isOpen: false, onConfirm: null });
   };
 
-  // Cleanup function with Supabase uploads removal
-  const clearOldDeliveredOrders = async () => {
-    try {
-      const twoMonthsAgo = new Date();
-      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
-      
-      const ordersSnapshot = await getDocs(collection(db, "orders"));
-      const allOrders = ordersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-
-      const ordersToDelete = allOrders.filter(order => {
-        if (order.status !== "Delivered to Egypt") return false;
-        let deliveredDate;
-        
-        if (order.deliveredAt) {
-          deliveredDate = order.deliveredAt.toDate();
-        } else if (order.createdAt) {
-          deliveredDate = order.createdAt.toDate();
-        } else {
-          return false;
-        }
-        return deliveredDate < twoMonthsAgo;
-      });
-
-      if (ordersToDelete.length === 0) {
-        return { deletedCount: 0, errorCount: 0 };
-      }
-
-      let deletedCount = 0;
-      let errorCount = 0;
-
-      for (const order of ordersToDelete) {
-        try {
-          await deleteDoc(doc(db, "orders", order.id));
-
-          if (supabase) {
-            try {
-              const { error: uploadsError } = await supabase
-                .from('uploads')
-                .delete()
-                .or(`order_id.eq.${order.orderId},firestore_order_id.eq.${order.id}`);
-              
-              if (uploadsError) {
-                errorCount++;
-              } 
-            } catch (supabaseError) {
-              errorCount++;
-            }
-          }
-          
-          deletedCount++;
-          
-        } catch (error) {
-            errorCount++;
-        }
-      }
-
-      if (isMounted.current && deletedCount > 0) {
-        showToast(`✅ Automatically cleared ${deletedCount} old delivered orders${errorCount > 0 ? ` (${errorCount} errors)` : ''}`, 
-          errorCount > 0 ? "warning" : "success");
-      }
-      
-      return { deletedCount, errorCount };
-      
-    } catch (error) {
-      if (isMounted.current) {
-        showToast(`❌ Automatic cleanup failed: ${error.message}`, "error");
-      }
-      throw error;
-    }
-  };
-
-  // Add this useEffect hook for daily cleanup
-  useEffect(() => {
-    let isSubscribed = true;
-    
-    const runAutoCleanup = async () => {
-      try {
-        const lastCleanup = localStorage.getItem('lastAutoCleanup');
-        const today = new Date().toDateString();
-        
-        if (!lastCleanup || lastCleanup !== today) {
-          
-          if (isSubscribed) {
-            await clearOldDeliveredOrders();
-            localStorage.setItem('lastAutoCleanup', today);
-          }
-        }
-      } catch (error) {
-        throw error;
-      }
-    };
-
-    if (isSubscribed) {
-      runAutoCleanup();
-    }
-
-    return () => {
-      isSubscribed = false;
-    };
-  }, []);
-
-  // Render order table with sheet-based merging
+  // Render order table with sheet-based merging - REMOVED TRACKING NUMBER COLUMN
   const renderOrderTable = (orderList, type, selectAll, onSelectAll) => {
     const totals = calculateTotals(orderList);
     const tableData = getOrdersWithSheetMerging(orderList);
@@ -2042,7 +1605,7 @@ Youla's Yard.`;
                  <th className="p-3 border-b font-semibold w-40">Order ID</th> 
                 <th className="p-3 border-b font-semibold w-32">Pieces</th>
                 <th className="p-3 border-b font-semibold w-60 bg-blue-200">Total Pieces</th>
-                <th className="p-3 border-b font-semibold w-120">Tracking Numbers</th>
+                {/* REMOVED TRACKING NUMBER COLUMN */}
                 <th className="p-3 border-b font-semibold w-80">Status</th>
                 <th className="p-3 border-b font-semibold w-32 text-center">Actions</th>
               </tr>
@@ -2129,12 +1692,8 @@ Youla's Yard.`;
                         </td>
                       )}
 
-                      <td className="p-3 w-120">
-                        <TrackingNumbersInput 
-                          order={order} 
-                          onUpdate={handleTrackingNumbersUpdate}
-                        />
-                      </td>
+                      {/* REMOVED TRACKING NUMBER CELL */}
+                      
                       <td className="p-3 w-80">
                         <select
                           value={order.status}
@@ -2257,12 +1816,8 @@ Youla's Yard.`;
                               </td>
                             ) : null}
                             
-                            <td className="p-3 w-120">
-                              <TrackingNumbersInput 
-                                order={order} 
-                                onUpdate={handleTrackingNumbersUpdate}
-                              />
-                            </td>
+                            {/* REMOVED TRACKING NUMBER CELL */}
+                            
                             <td className="p-3 w-80">
                               <select
                                 value={order.status}
@@ -2365,22 +1920,12 @@ Youla's Yard.`;
                                   <div className="text-xs text-gray-500">
                                     ({group.orders.length} orders)
                                   </div>
-                                  <button
-                                    onClick={() => handleUnmergeCells(group.id)}
-                                    className="text-xs bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded transition-colors"
-                                  >
-                                    Unmerge
-                                  </button>
                                 </div>
                               </td>
                             ) : null}
   
-                            <td className="p-3 w-120">
-                              <TrackingNumbersInput 
-                                order={order} 
-                                onUpdate={handleTrackingNumbersUpdate}
-                              />
-                            </td>
+                            {/* REMOVED TRACKING NUMBER CELL */}
+                            
                             <td className="p-3 w-80">
                               <select
                                 value={order.status}
@@ -2427,7 +1972,6 @@ Youla's Yard.`;
                     {formatNumber(totals.totalPieces)}
                   </td>
                   <td className="p-3 text-center text-gray-700 w-60"></td>
-                  <td className="p-3 text-center text-gray-700 w-120"></td>
                   <td className="p-3 text-center text-gray-700 w-80"></td>
                   <td className="p-3 text-center text-gray-700 w-32"></td>
                 </tr>

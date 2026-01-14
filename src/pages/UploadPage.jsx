@@ -12,7 +12,8 @@ import {
   serverTimestamp,
   updateDoc,
   increment,
-  setDoc
+  setDoc,
+  orderBy
 } from "firebase/firestore";
 import { supabase } from "../supabase";
 import FilePicker from "../components/FilePicker";
@@ -41,6 +42,11 @@ export default function UploadPage() {
     type: "",
   });
   const [customerErrors, setCustomerErrors] = useState({});
+
+  // Search results for client
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
 
   // Generate next order ID (same as in AddOrder page)
   const generateOrderId = async (orderType) => {
@@ -136,10 +142,12 @@ export default function UploadPage() {
       };
 
       setClient(createdCustomer);
-      setClientCode(docRef.id);
+      setClientCode(createdCustomer.customerCode);
       setNewCustomerMode(false);
+      setShowSearchResults(false);
       setNewCustomer({ name: "", phone: "", type: "" });
       setCustomerErrors({});
+      setSearchResults([]);
       setMessage(`✅ Customer added successfully! Code: ${customerCode}`);
 
       // Set to new order mode since this is a new customer
@@ -152,60 +160,98 @@ export default function UploadPage() {
 
   const handleClientLookup = async () => {
     if (!clientCode.trim()) {
-      setMessage("⚠️ Please enter a client code");
+      setMessage("⚠️ Please enter a client code or name");
+      setSearchResults([]);
+      setShowSearchResults(false);
       return;
     }
 
+    setSearching(true);
     try {
-      // Convert search term to uppercase for case-insensitive matching
-      const searchTerm = clientCode.trim().toUpperCase();
+      const searchTerm = clientCode.trim().toLowerCase();
       
-      // First try to find by customerCode (case-insensitive)
-      let q = query(collection(db, "customers"));
-      let snap = await getDocs(q);
+      // Query all customers for search
+      const q = query(
+        collection(db, "customers"),
+        orderBy("name")
+      );
+      const snap = await getDocs(q);
       
-      let customerDoc = null;
-      let customerData = null;
-
-      // Manual filtering for case-insensitive search
+      const results = [];
+      
       snap.docs.forEach(doc => {
         const data = doc.data();
-        // Check if customerCode matches case-insensitively
-        if (data.customerCode && data.customerCode.toUpperCase() === searchTerm) {
-          customerDoc = doc;
-          customerData = data;
+        const docId = doc.id;
+        
+        // Check multiple fields for matches
+        const name = data.name?.toLowerCase() || "";
+        const customerCode = data.customerCode?.toLowerCase() || "";
+        const phone = data.phone || "";
+        
+        // Search in multiple fields (partial matches allowed)
+        const matchesName = name.includes(searchTerm);
+        const matchesCode = customerCode.includes(searchTerm);
+        const matchesPhone = phone.includes(searchTerm);
+        const matchesId = docId.toLowerCase() === searchTerm; // Exact match for document ID
+        
+        if (matchesName || matchesCode || matchesPhone || matchesId) {
+          results.push({
+            id: docId,
+            ...data,
+            matchType: matchesCode ? "Code" : 
+                      matchesName ? "Name" : 
+                      matchesPhone ? "Phone" : "ID"
+          });
         }
       });
 
-      // If not found by customerCode, try by document ID (exact match)
-      if (!customerDoc) {
-        const docRef = doc(db, "customers", clientCode);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          customerDoc = docSnap;
-          customerData = docSnap.data();
-        }
-      }
-
-      if (customerDoc && customerData) {
-        setClient({
-          id: customerDoc.id,
-          ...customerData
-        });
-        setMessage(`✅ Customer found: ${customerData.name}`);
-        setNewCustomerMode(false);
-      } else {
+      setSearchResults(results);
+      setShowSearchResults(true);
+      
+      if (results.length === 0) {
+        setMessage("❌ No clients found. You can add a new customer below.");
         setClient(null);
-        setMessage("❌ Client not found. You can add a new customer below.");
         setNewCustomerMode(true);
         setOrderOptions([]);
         setSelectedOrder("new");
         setOrderType("");
+      } else {
+        // ALWAYS show results for selection, even if only one
+        setMessage(`🔍 Found ${results.length} client(s). Please select one from the list below:`);
+        setClient(null); // Clear any previously selected client
+        setNewCustomerMode(false);
       }
     } catch (error) {
+      console.error("Search error:", error);
       setMessage("❌ Error searching for client.");
+      setSearchResults([]);
+      setShowSearchResults(false);
       setClient(null);
+    } finally {
+      setSearching(false);
     }
+  };
+
+  const handleSelectClient = (selectedClient) => {
+    setClient(selectedClient);
+    setClientCode(selectedClient.customerCode);
+    setSearchResults([]);
+    setShowSearchResults(false);
+    setMessage(`✅ Customer selected: ${selectedClient.name} (${selectedClient.customerCode})`);
+    setNewCustomerMode(false);
+  };
+
+  // Clear search and selection
+  const handleClearSearch = () => {
+    setClient(null);
+    setClientCode("");
+    setSearchResults([]);
+    setShowSearchResults(false);
+    setOrderOptions([]);
+    setSelectedOrder("new");
+    setOrderType("");
+    setNewCustomerMode(false);
+    setMessage("Search cleared");
   };
 
   // Upload payment files to payments bucket
@@ -215,14 +261,13 @@ export default function UploadPage() {
       const filePath = `${client.id}/${fileName}`;
 
       const { data, error } = await supabase.storage
-        .from('payments') // Separate bucket for payments
+        .from('payments')
         .upload(filePath, file);
 
       if (error) {
         throw error;
       }
 
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('payments')
         .getPublicUrl(filePath);
@@ -240,14 +285,13 @@ export default function UploadPage() {
       const filePath = `${client.id}/${fileName}`;
 
       const { data, error } = await supabase.storage
-        .from('items') // Separate bucket for order items
+        .from('items')
         .upload(filePath, file);
 
       if (error) {
         throw error;
       }
 
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('items')
         .getPublicUrl(filePath);
@@ -261,9 +305,8 @@ export default function UploadPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Validate required fields
     if (!client) {
-      setMessage("⚠️ Please search for or add a customer first.");
+      setMessage("⚠️ Please select a customer from the search results.");
       return;
     }
 
@@ -277,7 +320,6 @@ export default function UploadPage() {
       return;
     }
 
-    // Validate payment amount is mandatory
     if (!paymentAmount || Number(paymentAmount) <= 0) {
       setMessage("⚠️ Payment amount is required and must be greater than 0.");
       return;
@@ -285,7 +327,6 @@ export default function UploadPage() {
 
     setUploading(true);
     try {
-      // Upload files to separate buckets
       const paymentUrls = await Promise.all(
         paymentFiles.map((file) => uploadPaymentFile(file))
       );
@@ -298,12 +339,9 @@ export default function UploadPage() {
       let actualOrderId = selectedOrder;
       let newCreatedOrderId = null;
 
-      // If it's a new order, create it in the orders collection
       if (selectedOrder === "new") {
-        // Generate order ID
         const generatedOrderId = await generateOrderId(orderType);
 
-        // Create the new order in orders collection
         const newOrderData = {
           customerId: client.id,
           customerName: client.name,
@@ -314,9 +352,9 @@ export default function UploadPage() {
           orderType: orderType,
           status: "Requested",
           depositEGP: Number(paymentAmount) || 0,
-          totalSR: 0, // These can be updated later
+          totalSR: 0,
           pieces: 0,
-          accountName: "Upload System", // Default account
+          accountName: "Upload System",
           trackingNumbers: [],
           totalEGP: 0,
           outstanding: 0,
@@ -329,13 +367,11 @@ export default function UploadPage() {
         displayOrderId = generatedOrderId;
         actualOrderId = orderDocRef.id;
       } else {
-        // For existing orders, get the order ID
         const selectedOrderData = orderOptions.find(o => o.id === selectedOrder);
         displayOrderId = selectedOrderData?.orderId || "UNKNOWN_ORDER";
         actualOrderId = selectedOrderData?.id || selectedOrder;
       }
 
-      // ⭐ UPDATED: Create the upload record in Supabase with snake_case column names
       const uploadData = {
         client_id: client.id,
         client_code: client.customerCode,
@@ -349,7 +385,6 @@ export default function UploadPage() {
         firestore_order_id: actualOrderId,
         order_type: selectedOrder === "new" ? orderType : orderOptions.find(o => o.id === selectedOrder)?.orderType,
         is_new_order: selectedOrder === "new",
-       // new_order_created: selectedOrder === "new",
         new_order_id: newCreatedOrderId,
         status: "Under Approval",
         token: token,
@@ -370,7 +405,6 @@ export default function UploadPage() {
       setOrderFiles([]);
       setPaymentAmount("");
 
-      // Refresh order options if we created a new order
       if (selectedOrder === "new") {
         const q = query(collection(db, "orders"), where("customerId", "==", client.id));
         const snap = await getDocs(q);
@@ -394,40 +428,151 @@ export default function UploadPage() {
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Client Code Search */}
+        {/* Client Search */}
         <div>
-          <label className="font-semibold">Client Code</label>
+          <label className="font-semibold">Search Client</label>
           <div className="flex gap-2 mt-1">
             <input
               type="text"
               className="border rounded-md p-2 w-full"
               value={clientCode}
-              onChange={(e) => setClientCode(e.target.value)}
-              placeholder="Enter client code (e.g. RE-001, re-001, ws-001) or customer ID"
+              onChange={(e) => {
+                setClientCode(e.target.value);
+                // Clear search results when user types
+                if (showSearchResults) {
+                  setShowSearchResults(false);
+                  setSearchResults([]);
+                }
+              }}
+              placeholder="Search by name, code, or phone (e.g. 'john', 're-001', '01012345678')"
               onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleClientLookup())}
             />
             <button
               type="button"
-              className="bg-blue-500 text-white px-3 rounded hover:bg-blue-600"
+              className="bg-blue-500 text-white px-3 rounded hover:bg-blue-600 disabled:bg-blue-300"
               onClick={handleClientLookup}
+              disabled={searching}
             >
-              Search
+              {searching ? "..." : "Search"}
             </button>
           </div>
+          <p className="text-sm text-gray-500 mt-1">
+            Search by: Name (partial), Customer Code (RE-001, WS-001), or Phone
+          </p>
         </div>
 
-        {/* Customer Info Display */}
-        {client && (
-          <div className="bg-green-50 border border-green-200 p-3 rounded-md">
-            <p><strong>Name:</strong> {client.name}</p>
-            <p><strong>Code:</strong> {client.customerCode}</p>
-            <p><strong>Type:</strong> {client.clientType}</p>
-            <p><strong>Phone:</strong> {client.phone}</p>
+        {/* Search Results - ALWAYS shown when there are results */}
+        {showSearchResults && searchResults.length > 0 && (
+          <div className="border border-gray-300 rounded-md overflow-hidden">
+            <div className="bg-gray-100 p-3 border-b">
+              <div className="flex justify-between items-center">
+                <h3 className="font-semibold">Select a Customer ({searchResults.length} found)</h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSearchResults(false);
+                    setSearchResults([]);
+                    setMessage("");
+                  }}
+                  className="text-sm text-gray-600 hover:text-gray-800"
+                >
+                  ✕ Close
+                </button>
+              </div>
+              <p className="text-sm text-gray-600 mt-1">
+                Click on a customer to select them for upload
+              </p>
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {searchResults.map((result) => (
+                <div 
+                  key={result.id}
+                  className="p-3 border-b border-gray-200 hover:bg-blue-50 cursor-pointer transition-colors"
+                  onClick={() => handleSelectClient(result)}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="font-semibold">{result.name}</p>
+                        <span className={`text-xs px-2 py-1 rounded ${
+                          result.clientType === "Wholesale" 
+                            ? "bg-purple-100 text-purple-800" 
+                            : "bg-green-100 text-green-800"
+                        }`}>
+                          {result.clientType}
+                        </span>
+                        <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                          {result.matchType}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                        <div>
+                          <span className="text-gray-600">Code:</span>
+                          <span className="font-mono ml-1">{result.customerCode}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Phone:</span>
+                          <span className="ml-1">{result.phone}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-blue-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Selected Customer Info Display */}
+        {client && !showSearchResults && (
+          <div className="bg-green-50 border border-green-200 p-4 rounded-md">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-semibold text-green-800 mb-2">Selected Customer</h3>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                  <div>
+                    <span className="text-gray-600">Name:</span>
+                    <span className="ml-2 font-semibold">{client.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Code:</span>
+                    <span className="ml-2 font-mono font-semibold">{client.customerCode}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Type:</span>
+                    <span className={`ml-2 px-2 py-1 text-xs rounded ${
+                      client.clientType === "Wholesale" 
+                        ? "bg-purple-100 text-purple-800" 
+                        : "bg-green-100 text-green-800"
+                    }`}>
+                      {client.clientType}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Phone:</span>
+                    <span className="ml-2 font-semibold">{client.phone}</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="text-sm text-gray-500 hover:text-gray-700"
+                onClick={handleClearSearch}
+                title="Clear selection"
+              >
+                ✕ Clear
+              </button>
+            </div>
           </div>
         )}
 
         {/* New Customer Form */}
-        {newCustomerMode && !client && (
+        {newCustomerMode && !client && !showSearchResults && (
           <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-md">
             <h3 className="font-semibold mb-3">Add New Customer</h3>
             <div className="space-y-3">
@@ -469,106 +614,130 @@ export default function UploadPage() {
                 {customerErrors.type && <p className="text-red-500 text-sm mt-1">{customerErrors.type}</p>}
               </div>
 
-              <button
-                type="button"
-                className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
-                onClick={handleAddNewCustomer}
-              >
-                Save Customer
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                  onClick={handleAddNewCustomer}
+                >
+                  Save Customer
+                </button>
+                <button
+                  type="button"
+                  className="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400"
+                  onClick={() => {
+                    setNewCustomerMode(false);
+                    setClientCode("");
+                    setMessage("");
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Payment upload */}
-        <div>
-          <label className="font-semibold">
-            Payment Amount (EGP) <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="number"
-            className="border rounded-md p-2 w-full"
-            value={paymentAmount}
-            onChange={(e) => setPaymentAmount(e.target.value)}
-            placeholder="Enter amount"
-            required
-          />
-        </div>
-
-        <FilePicker
-          label="Upload Payment Photos"
-          onFilesChange={setPaymentFiles}
-        />
-
-        {/* Order Selection */}
-        {client && (
-          <div className="space-y-4">
+        {/* Rest of the form - Payment, Order Selection, etc. */}
+        {client && !showSearchResults && (
+          <>
+            {/* Payment upload */}
             <div>
-              <label className="font-semibold">Order</label>
-              <select
+              <label className="font-semibold">
+                Payment Amount (EGP) <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
                 className="border rounded-md p-2 w-full"
-                value={selectedOrder}
-                onChange={(e) => {
-                  setSelectedOrder(e.target.value);
-                  if (e.target.value !== "new") {
-                    const selected = orderOptions.find(o => o.id === e.target.value);
-                    setOrderType(selected?.orderType || "");
-                  } else {
-                    setOrderType("");
-                  }
-                }}
-              >
-                <option value="">-- Select Order --</option>
-                {orderOptions.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.orderId} ({o.orderType === "B" ? "Barry" : "Gawy"})
-                  </option>
-                ))}
-                <option value="new">New Order</option>
-              </select>
+                value={paymentAmount}
+                onChange={(e) => setPaymentAmount(e.target.value)}
+                placeholder="Enter amount"
+                required
+                min="1"
+                step="0.01"
+              />
             </div>
 
-            {/* Order Type for New Orders */}
-            {selectedOrder === "new" && (
+            <FilePicker
+              label="Upload Payment Photos"
+              onFilesChange={setPaymentFiles}
+            />
+
+            {/* Order Selection */}
+            <div className="space-y-4">
               <div>
-                <label className="font-semibold">Order Type *</label>
+                <label className="font-semibold">Order</label>
                 <select
                   className="border rounded-md p-2 w-full"
-                  value={orderType}
-                  onChange={(e) => setOrderType(e.target.value)}
-                  required
+                  value={selectedOrder}
+                  onChange={(e) => {
+                    setSelectedOrder(e.target.value);
+                    if (e.target.value !== "new") {
+                      const selected = orderOptions.find(o => o.id === e.target.value);
+                      setOrderType(selected?.orderType || "");
+                    } else {
+                      setOrderType("");
+                    }
+                  }}
                 >
-                  <option value="">Select Order Type</option>
-                  <option value="B">Barry</option>
-                  <option value="G">Gawy</option>
+                  <option value="">-- Select Order --</option>
+                  {orderOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.orderId} ({o.orderType === "B" ? "Barry" : "Gawy"})
+                    </option>
+                  ))}
+                  <option value="new">New Order</option>
                 </select>
               </div>
-            )}
 
-            {/* Order Type Display for Existing Orders */}
-            {selectedOrder && selectedOrder !== "new" && orderType && (
-              <div className="bg-blue-50 border border-blue-200 p-3 rounded-md">
-                <p><strong>Order Type:</strong> {orderType === "B" ? "Barry" : "Gawy"}</p>
-              </div>
-            )}
-          </div>
+              {/* Order Type for New Orders */}
+              {selectedOrder === "new" && (
+                <div>
+                  <label className="font-semibold">Order Type *</label>
+                  <select
+                    className="border rounded-md p-2 w-full"
+                    value={orderType}
+                    onChange={(e) => setOrderType(e.target.value)}
+                    required
+                  >
+                    <option value="">Select Order Type</option>
+                    <option value="B">Barry</option>
+                    <option value="G">Gawy</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Order Type Display for Existing Orders */}
+              {selectedOrder && selectedOrder !== "new" && orderType && (
+                <div className="bg-blue-50 border border-blue-200 p-3 rounded-md">
+                  <p><strong>Order Type:</strong> {orderType === "B" ? "Barry" : "Gawy"}</p>
+                </div>
+              )}
+            </div>
+
+            <FilePicker label="Upload Order Photos" onFilesChange={setOrderFiles} />
+          </>
         )}
 
-        <FilePicker label="Upload Order Photos" onFilesChange={setOrderFiles} />
+        {/* Submit Button - Only show if customer is selected and search results are not showing */}
+        {client && !showSearchResults && (
+          <button
+            type="submit"
+            disabled={uploading}
+            className={`w-full py-2 rounded-md text-white ${uploading ? "bg-gray-400" : "bg-blue-500 hover:bg-blue-600"}`}
+          >
+            {uploading ? "Uploading..." : "Submit Uploads"}
+          </button>
+        )}
 
-        <button
-          type="submit"
-          disabled={uploading || !client}
-          className={`w-full py-2 rounded-md text-white ${uploading || !client ? "bg-gray-400" : "bg-blue-500 hover:bg-blue-600"
-            }`}
-        >
-          {uploading ? "Uploading..." : "Submit Uploads"}
-        </button>
-
+        {/* Message Display */}
         {message && (
-          <p className={`text-center text-sm mt-3 ${message.startsWith("✅") ? "text-green-600" :
-              message.startsWith("⚠️") ? "text-yellow-600" : "text-red-600"
-            }`}>
+          <p className={`text-center text-sm mt-3 ${
+            message.startsWith("✅") ? "text-green-600" :
+            message.startsWith("⚠️") ? "text-yellow-600" :
+            message.startsWith("🔍") ? "text-blue-600" : 
+            message.startsWith("❌") ? "text-red-600" : "text-gray-600"
+          }`}>
             {message}
           </p>
         )}
