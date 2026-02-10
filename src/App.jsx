@@ -95,7 +95,11 @@ function AppContent() {
               <SystemSettings />
             </ProtectedRoute>
           } />
-          <Route path="/upload/:id" element={<UploadDetailsPage />} />
+         <Route path="upload/:id" element={
+  <ProtectedRoute>
+    <UploadDetailsPage />
+  </ProtectedRoute>
+} />
         </Route>
       </Routes>
     </BrowserRouter>

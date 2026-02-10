@@ -39,6 +39,20 @@ export default function SheetDetails() {
     return Math.round(parseFloat(number) || 0);
   };
 
+  // Helper function to parse SAR values with decimals
+  const parseSARValue = (value) => {
+    if (value === '' || value === null || value === undefined) return 0;
+    const parsed = parseFloat(value);
+    return isNaN(parsed) ? 0 : parseFloat(parsed.toFixed(2));
+  };
+
+  // Helper function to parse EGP values as whole numbers
+  const parseEGPValue = (value) => {
+    if (value === '' || value === null || value === undefined) return 0;
+    const parsed = parseFloat(value);
+    return isNaN(parsed) ? 0 : Math.round(parsed);
+  };
+
   useEffect(() => {
     fetchSheetDetails();
     fetchAllOrders();
@@ -190,7 +204,14 @@ export default function SheetDetails() {
   const updateDynamicRow = (id, field, value) => {
     setDynamicRows(dynamicRows.map(row => 
       row.id === id 
-        ? { ...row, [field]: field === 'account' || field === 'mediator' ? value : parseInt(value) || 0 }
+        ? { 
+            ...row, 
+            [field]: field === 'account' || field === 'mediator' 
+              ? value 
+              : field === 'totalSR' || field === 'couponSR' || field === 'paidToWebsite'
+                ? parseSARValue(value) // Allow decimals for SAR values
+                : parseInt(value) || 0 
+          }
         : row
     ));
     
@@ -267,9 +288,9 @@ export default function SheetDetails() {
     return dynamicRows.reduce((totals, row) => {
       return {
         pieces: totals.pieces + (parseInt(row.pieces) || 0),
-        totalSR: totals.totalSR + (parseInt(row.totalSR) || 0),
-        couponSR: totals.couponSR + (parseInt(row.couponSR) || 0),
-        paidToWebsite: totals.paidToWebsite + (parseInt(row.paidToWebsite) || 0),
+        totalSR: totals.totalSR + (parseSARValue(row.totalSR) || 0),
+        couponSR: totals.couponSR + (parseSARValue(row.couponSR) || 0),
+        paidToWebsite: totals.paidToWebsite + (parseSARValue(row.paidToWebsite) || 0),
       };
     }, { 
       pieces: 0,
@@ -325,11 +346,11 @@ export default function SheetDetails() {
   const calculateTotalEGP = (order) => {
     if (!order) return { totalEGP: 0, outstanding: 0 };
 
-    // Parse all values as whole numbers
-    const totalSR = toWholeNumber(order.totalSR) || 0;
-    const extraEGP = toWholeNumber(order.extraEGP) || 0;
-    const depositEGP = toWholeNumber(order.depositEGP) || 0;
-    const discountEGP = Math.abs(toWholeNumber(order.discountEGP)) || 0;
+    // Parse all values - SAR values can have decimals, EGP values are whole numbers
+    const totalSR = parseSARValue(order.totalSR) || 0;
+    const extraEGP = parseEGPValue(order.extraEGP) || 0;
+    const depositEGP = parseEGPValue(order.depositEGP) || 0;
+    const discountEGP = Math.abs(parseEGPValue(order.discountEGP)) || 0;
     
     // Calculate conversion rate based on order type and client type
     let conversionRate = 0;
@@ -367,7 +388,7 @@ export default function SheetDetails() {
       totalOrderEGP = roundToNearest5(totalOrderEGPBeforeRounding);
     } else {
       // For Wholesale or no client type, just ensure whole numbers (no decimals)
-      totalOrderEGP = toWholeNumber(totalOrderEGPBeforeRounding);
+      totalOrderEGP = parseEGPValue(totalOrderEGPBeforeRounding);
     }
 
     // Calculate Outstanding EGP: Total Order EGP - Deposit EGP
@@ -378,12 +399,12 @@ export default function SheetDetails() {
     if (order.clientType === "Retail") {
       outstandingEGP = roundToNearest5(outstandingEGPBeforeRounding);
     } else {
-      outstandingEGP = toWholeNumber(outstandingEGPBeforeRounding);
+      outstandingEGP = parseEGPValue(outstandingEGPBeforeRounding);
     }
 
     // Final safety check to ensure whole numbers
-    totalOrderEGP = toWholeNumber(totalOrderEGP);
-    outstandingEGP = toWholeNumber(outstandingEGP);
+    totalOrderEGP = parseEGPValue(totalOrderEGP);
+    outstandingEGP = parseEGPValue(outstandingEGP);
 
     return { totalEGP: totalOrderEGP, outstanding: outstandingEGP };
   };
@@ -391,21 +412,31 @@ export default function SheetDetails() {
   const updateOrderField = async (orderId, field, value) => {
     try {
       const orderRef = doc(db, "orders", orderId);
-      const numericValue = field === 'depositEGP' || field === 'couponSR' || field === 'paidToWebsite' 
-        ? toWholeNumber(value) 
-        : parseInt(value) || 0;
+      
+      // Determine the appropriate parsing function based on field type
+      let parsedValue;
+      if (field === 'depositEGP' || field === 'extraEGP' || field === 'discountEGP') {
+        // EGP fields: whole numbers
+        parsedValue = parseEGPValue(value);
+      } else if (field === 'couponSR' || field === 'paidToWebsite' || field === 'totalSR' || field === 'extraSR') {
+        // SAR fields: allow decimals
+        parsedValue = parseSARValue(value);
+      } else {
+        // Other fields: whole numbers
+        parsedValue = parseInt(value) || 0;
+      }
       
       // Update the field
       await updateDoc(orderRef, { 
-        [field]: numericValue,
+        [field]: parsedValue,
         updatedAt: new Date()
       });
 
       // Recalculate total EGP and outstanding if financial field is updated
-      if (['depositEGP', 'couponSR', 'paidToWebsite', 'totalSR', 'extraEGP', 'discountEGP'].includes(field)) {
+      if (['depositEGP', 'couponSR', 'paidToWebsite', 'totalSR', 'extraEGP', 'discountEGP', 'extraSR'].includes(field)) {
         const order = orders.find(o => o.id === orderId);
         if (order) {
-          const updatedOrder = { ...order, [field]: numericValue };
+          const updatedOrder = { ...order, [field]: parsedValue };
           const { totalEGP, outstanding } = calculateTotalEGP(updatedOrder);
           
           // Update Firestore with recalculated values
@@ -429,7 +460,7 @@ export default function SheetDetails() {
         // For other fields, just update the field
         setOrders(prev => prev.map(o => 
           o.id === orderId 
-            ? { ...o, [field]: numericValue }
+            ? { ...o, [field]: parsedValue }
             : o
         ));
       }
@@ -473,7 +504,18 @@ export default function SheetDetails() {
   };
 
   const formatNumber = (num) => {
-    const number = parseInt(num) || 0;
+    if (num === undefined || num === null) return '0';
+    
+    // Check if it's a SAR value (should show decimals)
+    if (typeof num === 'number' && !Number.isInteger(num)) {
+      return num.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+    
+    // For whole numbers (like pieces, EGP)
+    const number = parseFloat(num) || 0;
     return number.toLocaleString('en-US', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
@@ -483,19 +525,19 @@ export default function SheetDetails() {
   const calculateTotals = () => {
     const totals = orders.reduce((acc, order) => {
       // Use existing totalEGP and outstanding from Firestore (already rounded)
-      const totalEGP = toWholeNumber(order.totalEGP) || 0;
-      const outstanding = toWholeNumber(order.outstanding) || 0;
+      const totalEGP = parseEGPValue(order.totalEGP) || 0;
+      const outstanding = parseEGPValue(order.outstanding) || 0;
       
       return {
-        pieces: acc.pieces + (toWholeNumber(order.pieces) || 0),
-        totalSR: acc.totalSR + (toWholeNumber(order.totalSR) || 0),
-        extraSR: acc.extraSR + (toWholeNumber(order.extraSR) || 0),
-        extraEGP: acc.extraEGP + (toWholeNumber(order.extraEGP) || 0),
+        pieces: acc.pieces + (parseInt(order.pieces) || 0),
+        totalSR: acc.totalSR + (parseSARValue(order.totalSR) || 0),
+        extraSR: acc.extraSR + (parseSARValue(order.extraSR) || 0),
+        extraEGP: acc.extraEGP + (parseEGPValue(order.extraEGP) || 0),
         totalEGP: acc.totalEGP + totalEGP,
-        depositEGP: acc.depositEGP + (toWholeNumber(order.depositEGP) || 0),
+        depositEGP: acc.depositEGP + (parseEGPValue(order.depositEGP) || 0),
         outstandingEGP: acc.outstandingEGP + outstanding,
-        couponSR: acc.couponSR + (toWholeNumber(order.couponSR) || 0),
-        paidToWebsiteSR: acc.paidToWebsiteSR + (toWholeNumber(order.paidToWebsite) || 0),
+        couponSR: acc.couponSR + (parseSARValue(order.couponSR) || 0),
+        paidToWebsiteSR: acc.paidToWebsiteSR + (parseSARValue(order.paidToWebsite) || 0),
         orders: acc.orders + 1
       };
     }, { 
@@ -751,7 +793,7 @@ export default function SheetDetails() {
                               onChange={(e) => setEditValue(e.target.value)}
                               className="w-24 px-2 py-1 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm text-center"
                               autoFocus
-                              step="1"
+                              step="0.01"
                               min="0"
                             />
                             <div className="flex space-x-1">
@@ -792,7 +834,7 @@ export default function SheetDetails() {
                               onChange={(e) => setEditValue(e.target.value)}
                               className="w-24 px-2 py-1 border border-indigo-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm text-center"
                               autoFocus
-                              step="1"
+                              step="0.01"
                               min="0"
                             />
                             <div className="flex space-x-1">
@@ -1060,7 +1102,7 @@ export default function SheetDetails() {
                           onChange={(e) => updateDynamicRow(row.id, 'totalSR', e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center"
                           min="0"
-                          step="1"
+                          step="0.01"
                         />
                       </td>
                       
@@ -1072,7 +1114,7 @@ export default function SheetDetails() {
                           onChange={(e) => updateDynamicRow(row.id, 'couponSR', e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center"
                           min="0"
-                          step="1"
+                          step="0.01"
                         />
                       </td>
                       
@@ -1084,36 +1126,45 @@ export default function SheetDetails() {
                           onChange={(e) => updateDynamicRow(row.id, 'paidToWebsite', e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center"
                           min="0"
-                          step="1"
+                          step="0.01"
                         />
                       </td>
                       
                       {/* Tracking Numbers Field */}
                       <td className="p-4 min-w-[200px]">
                         <div className="space-y-2">
-                          {row.trackingNumbers?.map((tracking, index) => (
-                            <div key={index} className="flex items-center space-x-2">
-                              <input
-                                type="text"
-                                value={tracking}
-                                onChange={(e) => updateTrackingNumber(row.id, index, e.target.value)}
-                                placeholder="Enter tracking number"
-                                className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                              />
-                              <button
-                                onClick={() => removeTrackingNumber(row.id, index)}
-                                className="text-red-600 hover:text-red-800 p-1 flex-shrink-0"
-                                title="Remove tracking number"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
+                          {row.trackingNumbers?.map((tracking, index) => {
+                            // Auto-focus the last tracking number in the last row
+                            const isLastTrackingNumber = 
+                              index === row.trackingNumbers.length - 1 && 
+                              dynamicRows.indexOf(row) === dynamicRows.length - 1;
+                            
+                            return (
+                              <div key={index} className="flex items-center space-x-2">
+                                <input
+                                  type="text"
+                                  value={tracking}
+                                  autoFocus={isLastTrackingNumber}
+                                  onChange={(e) => updateTrackingNumber(row.id, index, e.target.value)}
+                                  placeholder="Enter tracking number"
+                                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                />
+                                <button
+                                  onClick={() => removeTrackingNumber(row.id, index)}
+                                  className="text-red-600 hover:text-red-800 p-1 flex-shrink-0"
+                                  title="Remove tracking number"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            );
+                          })}
                           <button
                             onClick={() => addTrackingNumber(row.id)}
                             className="flex items-center space-x-1 text-blue-600 hover:text-blue-800 text-sm"
                           >
                             <FiPlus size={14} />
+                            <span>Add Tracking</span>
                           </button>
                         </div>
                       </td>
